@@ -26,6 +26,80 @@ Author:
 #include "model/model_smt2_pp.h"
 #include "model/model_v2_pp.h"
 #include "util/debug.h"
+#include "viras.h"
+
+using namespace viras;
+struct z3_viras_config {
+  ast_manager& m;
+  arith_util m_arith;
+  z3_viras_config(ast_manager* m) :m(*m), m_arith(*m) {}
+
+  using Literals = expr_ref_vector; 
+  using Var      = app*; 
+  using Term     = expr*;
+  using Numeral  = rational;
+
+  Numeral numeral(int);
+  Numeral lcm(Numeral l, Numeral r);
+
+  Numeral mul(Numeral l, Numeral r);
+  Numeral add(Numeral l, Numeral r);
+  Numeral div(Numeral l, Numeral r);
+
+  Term mul(Numeral l, Term r);
+  Term div(Term l, Numeral r);
+  Term add(Term l, Term r);
+  Term add(Term l, Numeral r);
+  Term add(Numeral l, Term r);
+  Term floor(Term t);
+  Term minus(Term t);
+
+  Term term(Numeral n);
+  Term one() { return term(numeral(1)); }
+
+  Term subs(Term term, Var var, Term by);
+
+  /* the numerator of some rational */
+  Numeral num(Numeral l);
+
+  /* the denomiantor of some rational */
+  Numeral den(Numeral l);
+
+  template<class IfVar, class IfOne, class IfMul, class IfAdd, class IfFloor>
+  auto matchTerm(Term t, 
+      IfVar   if_var, 
+      IfOne   if_one, 
+      IfMul   if_mul, 
+      IfAdd   if_add, 
+      IfFloor if_floor) -> decltype(auto) {
+    expr* e1;
+    expr* e2;
+    Numeral q;
+    if (m_arith.is_mul(t, e1, e2)) {
+      expr* e = nullptr;
+      if (m_arith.is_numeral(e1, q)) { e = e1; }
+      if (m_arith.is_numeral(e2, q)) { e = e2; }
+      SASSERT(e != nullptr); // TODO what if someone passes a non-linar term
+      return if_mul(q, e);
+    } else if (m_arith.is_numeral(t, q)) {
+      if (q.is_one()) {
+        return if_one();
+      } else {
+        return if_mul(q, this->one());
+      }
+    } else if (m_arith.is_add(t, e1, e2)) {
+      return if_add(e1, e2);
+    } else if (m_arith.is_to_int(t, e1)) {
+      return if_floor(e1);
+    } else {
+      SASSERT(is_app(t)); // TODO what if someone passes in a var? why don't we use vars in the first place?
+      auto var = (app*)t; 
+      SASSERT(var->get_num_args() == 0); // TODO what if someone passes an uninterpreted function?
+      return if_var(var);
+    }
+  }
+};
+
 
 namespace mbp {
 
