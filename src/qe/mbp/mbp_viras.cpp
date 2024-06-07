@@ -29,12 +29,14 @@ Author:
 #include "viras.h"
 
 using namespace viras;
+
 struct z3_viras_config {
   ast_manager& m;
   arith_util m_arith;
   z3_viras_config(ast_manager* m) :m(*m), m_arith(*m) {}
 
   using Literals = expr_ref_vector; 
+  using Literal  = expr*; 
   using Var      = app*; 
   using Term     = expr*;
   using Numeral  = rational;
@@ -58,6 +60,8 @@ struct z3_viras_config {
   Term one() { return term(numeral(1)); }
 
   Term subs(Term term, Var var, Term by);
+  Term term_of_literal(Literal l);
+  PredSymbol symbol_of_literal(Literal l);
 
   /* the numerator of some rational */
   Numeral num(Numeral l);

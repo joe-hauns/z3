@@ -1,3 +1,4 @@
+#include "muz/rel/dl_lazy_table.h"
 #include <optional>
 
 #pragma once
@@ -173,9 +174,16 @@ namespace viras {
        | map([a = std::move(a)](auto i) { return std::move(a[i]); }); }
 
     template<class Array> auto array(Array const& a)
-    { return range(0, a.size()) | map([&](auto i) { return &a[i]; }); }
+    { return range(0, a.size()) | map([&](auto i) { return a[i]; }); }
 
     template<class Array> auto array(Array      & a)
+    { return range(0, a.size()) | map([&](auto i) { return a[i]; }); }
+
+
+    template<class Array> auto array_ptr(Array const& a)
+    { return range(0, a.size()) | map([&](auto i) { return &a[i]; }); }
+
+    template<class Array> auto array_ptr(Array      & a)
     { return range(0, a.size()) | map([&](auto i) { return &a[i]; }); }
 
     template<class F>
@@ -190,7 +198,67 @@ namespace viras {
     ClosureIter<F> closure(F fn)
     { return ClosureIter<F>{std::move(fn)}; }
 
+    template<class A, unsigned N>
+    struct ConstSizeIter {
+      A _elems[N];
+      unsigned _cur;
+
+      auto next() -> std::optional<A>
+      { return _cur < N ? std::optional<A>(std::move(_elems[_cur++]))
+                        : std::optional<A>(); }
+    };
+
+    template<class A>
+    constexpr auto empty() 
+    { return ConstSizeIter<A, 0> { ._cur = 0, }; }
+
+    template<class A, class... As>
+    constexpr auto const_size(A a, As... as) 
+    { return ConstSizeIter<A, std::tuple_size_v<std::tuple<A, As...>>>{ ._elems = {std::move(a), std::move(as)...}, ._cur = 0, }; }
+
+
+    template<class... Is>
+    struct IfThenElseIter {
+      std::variant<Is...> self;
+
+      auto next()
+      { return std::visit([](auto&& x){ return x.next(); }, self); }
+    };
+
+    template<class Conds, class... Thens>
+    struct IfThen {
+      Conds _conds;
+      std::tuple<Thens...> _thens;
+
+      template<class Cond, class Then>
+      auto else_if(Cond c, Then t) -> IfThen<decltype(std::tuple_cat(_conds, std::make_tuple(c))), Thens..., Then>;
+
+      template<class Else>
+      auto else_(Else e) -> IfThenElseIter<
+                         std::invoke_result_t<Thens>..., 
+                         std::invoke_result_t<Else>>;
+    };
+
+    template<class Cond, class Then>
+    auto if_then(Cond c, Then t)
+    { return IfThen<std::tuple<Cond>,Then> { std::make_tuple(std::move(c)), t }; }
+
+    template<class I, class... Is>
+    struct ConcatIter {
+      std::tuple<I, Is...> self;
+      unsigned idx;
+
+      std::optional<value_type<I>> next();
+      // { return std::visit([](auto&& x){ return x.next(); }, self); }
+    };
+
+    template<class... Is>
+    ConcatIter<Is...> concat(Is... is) 
+    { return ConcatIter<Is...> { std::make_tuple(std::move(is)...) }; }
+
   } // namespace iter
+
+  enum class PredSymbol { Gt, Geq, Neq, Eq, };
 
   template<class Config>
   class Viras {
@@ -198,6 +266,7 @@ namespace viras {
     using Numeral  = typename Config::Numeral;
     using Var      = typename Config::Var;
     using Literals = typename Config::Literals;
+    using Literal  = typename Config::Literal;
     Config _config;
   public:
 
@@ -217,26 +286,26 @@ namespace viras {
     static WithConfig<T> withConfig(Config* c, T inner)
     { return WithConfig<T> { c, std::move(inner) }; }
 
-#define BIN_OP_WITH_CONFIG(OP, op_name) \
-    template<class R> \
-    friend auto operator OP(int lhs, WithConfig<R> rhs)  \
-    { return rhs.conf->numeral(lhs) OP rhs; } \
-    \
-    template<class L> \
-    friend auto operator OP(WithConfig<L> lhs, int rhs)  \
-    { return lhs OP lhs.conf->numeral(rhs); } \
-\
-    template<class L, class R> \
-    friend auto operator OP(WithConfig<L> lhs, R rhs)  \
-    { return withConfig(lhs.conf, lhs.conf->op_name(lhs.inner, rhs)); } \
-\
-    template<class L, class R> \
-    friend auto operator OP(L lhs, WithConfig<R> rhs)  \
-    { return withConfig(rhs.conf, rhs.conf->op_name(lhs, rhs.inner)); } \
-\
-    template<class L, class R> \
-    friend auto operator OP(WithConfig<L> l, WithConfig<R> r)  \
-    { return l OP r.inner; } \
+#define BIN_OP_WITH_CONFIG(OP, op_name)                                                   \
+    template<class R>                                                                     \
+    friend auto operator OP(int lhs, WithConfig<R> rhs)                                   \
+    { return rhs.conf->numeral(lhs) OP rhs; }                                             \
+                                                                                          \
+    template<class L>                                                                     \
+    friend auto operator OP(WithConfig<L> lhs, int rhs)                                   \
+    { return lhs OP lhs.conf->numeral(rhs); }                                             \
+                                                                                          \
+    template<class L, class R>                                                            \
+    friend auto operator OP(WithConfig<L> lhs, R rhs)                                     \
+    { return withConfig(lhs.conf, lhs.conf->op_name(lhs.inner, rhs)); }                   \
+                                                                                          \
+    template<class L, class R>                                                            \
+    friend auto operator OP(L lhs, WithConfig<R> rhs)                                     \
+    { return withConfig(rhs.conf, rhs.conf->op_name(lhs, rhs.inner)); }                   \
+                                                                                          \
+    template<class L, class R>                                                            \
+    friend auto operator OP(WithConfig<L> l, WithConfig<R> r)                             \
+    { return l OP r.inner; }                                                              \
 
     BIN_OP_WITH_CONFIG(*, mul);
     BIN_OP_WITH_CONFIG(+, add);
@@ -297,7 +366,7 @@ namespace viras {
       WithConfig<Term> lim_at(WithConfig<Term> x0) { return WithConfig<Term> { x0.conf, x0.conf->subs(lim, x, x0), }; }
       WithConfig<Term> dseg(WithConfig<Term> x0) { return -(sslp * x0) + lim_at(x0); }
       WithConfig<Term> zero(WithConfig<Term> x0) { return x0 - lim_at(x0) / sslp; }
-
+      bool periodic() { return oslp == 0; }
     };
 
     template<class T> WithConfig<T> wrapConfig(T t) { return WithConfig<T> { &_config, std::move(t) }; }
@@ -438,7 +507,7 @@ namespace viras {
           } else if (rec.breaks.empty()) {
             out.breaks.push_back(Break {rec.zero(term(0)).inner, out.per});
           } else {
-            auto p_min = *(iter::array(out.breaks) 
+            auto p_min = *(iter::array_ptr(out.breaks) 
               | iter::map([](auto b) -> Numeral { return b->p; })
               | iter::min);
             for ( auto b0p_pZ : rec.breaks ) {
@@ -463,7 +532,15 @@ namespace viras {
 
 
     class VirtualTerm {
+    public:
+      static VirtualTerm minusInf();
+      static VirtualTerm plusEpsilon(Term t);
+      static VirtualTerm plain(Term t);
+    };
 
+    class ElimSetIter2 {
+    public:
+      std::optional<VirtualTerm> next();
     };
 
     class ElimSetIter {
@@ -471,7 +548,47 @@ namespace viras {
       std::optional<VirtualTerm> next();
     };
 
-    ElimSetIter elim_set(Var const& x, Literals const& lits);
+#define if_then_(x, y) if_then([&]() { return x; }, [&]() { return y; }) 
+#define else_if_(x, y) .else_if([&]() { return x; }, [&]() { return y; })
+#define else____(x) .else_([&]() { return x; })
+#define else_is_(x,y) .else_([&]() { SASSERT(x); return y; })
+
+    auto elim_set(Var const& x, Literal const& lit)
+    {
+      auto t = analyse(_config.term_of_literal(lit), x);
+      auto symbol = _config.symbol_of_literal(lit);
+
+      return iter::if_then_(t.breaks.empty(), 
+                           iter::if_then_(t.sslp == 0              , iter::const_size(VirtualTerm::minusInf()))
+                                 else_if_(symbol == PredSymbol::Neq, iter::const_size(VirtualTerm::minusInf(), VirtualTerm::plusEpsilon(t.zero(term(0)))))
+                                 else_if_(symbol == PredSymbol:: Eq, iter::const_size(VirtualTerm::plain(t.zero(term(0)))))
+                                 else_if_(t.sslp < 0               , iter::const_size(VirtualTerm::minusInf()))
+                                 else_if_(symbol == PredSymbol::Geq, iter::const_size(VirtualTerm::plain(t.zero(term(0)))))
+                                 else_is_(symbol == PredSymbol::Gt , iter::const_size(VirtualTerm::plusEpsilon(t.zero(term(0))))))
+
+                   else_is_(!t.breaks.empty(), [&]() { 
+                       auto ebreak       = ElimSetIter{};
+                       auto eseg         = ElimSetIter{};
+                       auto ebound_plus  = ElimSetIter{};
+                       auto ebound_minus = ElimSetIter{};
+                       return iter::if_then_(t.periodic(), iter::concat(ebreak, eseg))
+                                    else____(              iter::concat(ebreak, eseg, ebound_plus, ebound_minus));
+                   }());
+
+    }
+
+    auto elim_set(Var const& x, Literals const& lits)
+    {
+      return iter::array(lits) 
+        | iter::flat_map([&](auto* lit) { return elim_set(x, lit); });
+      // return iter::if_then([&](){ return  })
+      // return iter::if_then([](){ return true; }, []() { return ElimSetIter { }; })
+      //               .else_if([](){ return true; }, []() { return ElimSetIter2 { }; })
+      //               .else_([]() { return ElimSetIter { }; });
+      // return iter::if_then([](){ return true; }, []() { return ElimSetIter { }; })
+      //               .else_if([](){ return true; }, []() { return ElimSetIter2 { }; })
+      //               .else_([]() { return ElimSetIter { }; });
+    }
 
     class VsubsIter {
     public:
