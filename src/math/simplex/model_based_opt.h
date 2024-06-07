@@ -219,6 +219,7 @@ namespace opt {
         // 
         // Project set of variables from inequalities.
         //
+        // TODO joe
         vector<def> project(unsigned num_vars, unsigned const* vars, bool compute_def);
 
         //

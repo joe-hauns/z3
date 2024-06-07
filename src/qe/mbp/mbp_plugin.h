@@ -35,6 +35,7 @@ namespace mbp {
         def(const expr_ref& v, expr_ref& t): var(v), term(t) {}
     };
 
+    // TODO joe
     class project_plugin {
         ast_manager&     m;
         expr_mark        m_visited;
@@ -60,14 +61,27 @@ namespace mbp {
     public:
         project_plugin(ast_manager& m) :m(m), m_cache(m), m_args(m), m_pure_eqs(m) {}
         virtual ~project_plugin() = default;
+        // Q: What is the supposed to do?
         virtual bool operator()(model& model, app* var, app_ref_vector& vars, expr_ref_vector& lits) { return false; }
         /**
            \brief partial solver.
         */
+        // Q: What is the supposed to do in contrast to project?
         virtual bool solve(model& model, app_ref_vector& vars, expr_ref_vector& lits) { return false; }
+        // Q: What are family ids?
         virtual family_id get_family_id() { return null_family_id; }
 
+        // Q: What is the supposed to do? Esp in contrast to the other application operator?
+        // the only implemntor is the aritmetic plugin which implements it as
+        /*
+        bool operator()(model& model, app_ref_vector& vars, expr_ref_vector& lits) 
+        { 
+          vector<def> defs;
+          return m_imp->project(model, vars, lits, defs, false); // <- false = do not compute definitions
+        };
+         */
         virtual bool operator()(model& model, app_ref_vector& vars, expr_ref_vector& lits) { return false; };
+
 
         /**
            \brief project vars modulo model, return set of definitions for eliminated variables.
@@ -82,6 +96,8 @@ namespace mbp {
            \brief model based saturation. Saturates theory axioms to equi-satisfiable literals over EUF,
            such that 'shared' are not retained for EUF.
          */
+        // Q: Which theory axioms? I don't get the explanation.
+        // This is only implemented for arrays
         virtual void saturate(model& model, func_decl_ref_vector const& shared, expr_ref_vector& lits) {}
 
 

@@ -1,6 +1,7 @@
 z3_add_component(mbp
   SOURCES
     mbp_arith.cpp    
+    mbp_viras.cpp
     mbp_arrays.cpp
     mbp_arrays_tg.cpp
     mbp_basic_tg.cpp

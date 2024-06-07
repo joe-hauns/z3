@@ -39,6 +39,7 @@ Revision History:
 #include "qe/mbp/mbp_arrays.h"
 #include "qe/mbp/mbp_qel.h"
 #include "qe/mbp/mbp_datatypes.h"
+#include "qe/mbp/mbp_viras.h"
 
 using namespace qe;
 
@@ -343,7 +344,11 @@ public:
     }
 
     impl(ast_manager& m, params_ref const& p) :m(m), m_params(p), m_rw(m) {
-        add_plugin(alloc(mbp::arith_project_plugin, m));
+        if (p.get_bool("viras", false)) {
+          add_plugin(alloc(mbp::viras_project_plugin, m));
+        } else {
+          add_plugin(alloc(mbp::arith_project_plugin, m));
+        }
         add_plugin(alloc(mbp::datatype_project_plugin, m));
         add_plugin(alloc(mbp::array_project_plugin, m));
         updt_params(p);
@@ -432,6 +437,7 @@ public:
             }
         }
 
+    // TODO joe
     void mbp(bool force_elim, app_ref_vector& vars, model& model, expr_ref_vector& fmls) {
         SASSERT(validate_model(model, fmls));
         expr_ref val(m), tmp(m);
@@ -445,6 +451,7 @@ public:
             app_ref_vector new_vars(m);
             progress = false;
             for (mbp::project_plugin* p : m_plugins) {
+                // Q: Is this the same thing as the later call of the apply operator but optimized for cases where we can project all variables at once?
                 if (p)
                     (*p)(model, vars, fmls);
             }
@@ -452,6 +459,7 @@ public:
                 var = vars.back();
                 vars.pop_back();
                 mbp::project_plugin* p = get_plugin(var);
+                // Q: if I understood correctly here we're projecting away `var`, what is the `vars` parameter for still? To signal which variables are implicitly universally quantified (i.e. shouldn't be set in the model by model completion)?
                 if (p && (*p)(model, var, vars, fmls)) {
                     progress = true;
                 }

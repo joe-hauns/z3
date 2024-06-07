@@ -23,6 +23,7 @@ Author:
 #include "qe/mbp/mbp_arith.h"
 #include "qe/mbp/mbp_arrays.h"
 #include "qe/mbp/mbp_datatypes.h"
+#include "qe/mbp/mbp_viras.h"
 #include "sat/smt/sat_th.h"
 #include "sat/smt/q_mbi.h"
 #include "sat/smt/q_solver.h"
@@ -309,6 +310,7 @@ namespace q {
         return result;
     }
 
+    // Q: what is the diffence between q_mbi and qe_mbp? Which one is actually used? Both of them? How do we the two methods relate? Why does the mbq::project_plugin have to support both?
     expr_ref mbqi::solver_project(model& mdl, q_body& qb, expr_ref_vector& eqs, bool use_inst) {
         eqs.reset();
         model::scoped_model_completion _sc(mdl, true);
