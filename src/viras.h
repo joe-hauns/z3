@@ -80,20 +80,19 @@ namespace viras {
       I i;
       F f;
       bool end;
-      optional<value_type<I>> next();
-      // optional<value_type<I>> next() { 
-      //   if (end) {
-      //     return {};
-      //   } else {
-      //     auto e = i.next();
-      //     if (!bool(e) || !f(&*e)) {
-      //       end = true;
-      //       return {};
-      //     } else {
-      //       return e;
-      //     }
-      //   }
-      // }
+      std::optional<value_type<I>> next() { 
+        if (end) {
+          return {};
+        } else {
+          auto e = i.next();
+          if (!bool(e) || !f(&*e)) {
+            end = true;
+            return {};
+          } else {
+            return std::optional<value_type<I>>(std::move(e));
+          }
+        }
+      }
     };
 
     constexpr auto take_while = [](auto f) {
@@ -183,8 +182,8 @@ namespace viras {
     struct ClosureIter {
       F fn;
 
-      auto next() -> std::invoke_result_t<F>;
-      // { return fn(); }
+      auto next() -> std::invoke_result_t<F>
+      { return fn(); }
     };
 
     template<class F>
@@ -331,14 +330,11 @@ namespace viras {
     };
 
     auto intersectGrid(Break s_pZ, Bound l, Term t, Numeral k, Bound r) {
-      auto f = [n = numeral(0).inner, one = numeral(1)]() mutable {
+      auto N = iter::closure([this, n = numeral(0).inner, one = numeral(1)]() mutable {
           auto out = n;
           n = n + one;
-          return std::optional(out);
-       };
-      auto N = iter::closure(std::move(f));
-      static_assert(std::is_same_v<decltype(N), iter::ClosureIter<decltype(f)>>);
-      static_assert(std::is_same_v<iter::value_type<decltype(N)>, Numeral>);
+          return std::optional(wrapConfig(out));
+       });
       auto p  = wrapConfig(s_pZ.p);
       auto start = [&]() {
         switch(l) {
@@ -349,8 +345,8 @@ namespace viras {
       return std::move(N) 
         | iter::take_while([r,p,k](auto n) -> bool { 
             switch(r) {
-              case Bound::Open: return n * p < k; 
-              case Bound::Closed: return n * p <= k; 
+              case Bound::Open: return (*n) * p < k; 
+              case Bound::Closed: return (*n) * p <= k; 
             }
           })
         | iter::map([start, p](auto n) {
