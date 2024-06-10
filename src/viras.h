@@ -113,15 +113,18 @@ namespace viras {
       optional<value_type<value_type<I>>> next()
       {
         if (!init) {
-          inner = outer.next();
+          inner.~decltype(inner)();
+          new(&inner) decltype(inner)(outer.next());
           init = true;
         }
         while (inner) {
           auto next = inner->next();
           if (next) 
             return optional(*next);
-          else 
-            inner = outer.next();
+          else {
+            inner.~decltype(inner)();
+            new(&inner) decltype(inner)(outer.next());
+          }
         }
         return {};
       }
@@ -156,7 +159,7 @@ namespace viras {
       T lower;
       T upper;
 
-      optional<T> next()
+      std::optional<T> next()
       {
         if (lower < upper) return optional(lower++);
         else return {};
@@ -199,22 +202,22 @@ namespace viras {
     { return ClosureIter<F>{std::move(fn)}; }
 
     template<class A, unsigned N>
-    struct ConstSizeIter {
-      A _elems[N];
+    struct ValsIter {
+      A _vals[N];
       unsigned _cur;
 
       auto next() -> std::optional<A>
-      { return _cur < N ? std::optional<A>(std::move(_elems[_cur++]))
+      { return _cur < N ? std::optional<A>(std::move(_vals[_cur++]))
                         : std::optional<A>(); }
     };
 
     template<class A>
     constexpr auto empty() 
-    { return ConstSizeIter<A, 0> { ._cur = 0, }; }
+    { return ValsIter<A, 0> { ._cur = 0, }; }
 
     template<class A, class... As>
-    constexpr auto const_size(A a, As... as) 
-    { return ConstSizeIter<A, std::tuple_size_v<std::tuple<A, As...>>>{ ._elems = {std::move(a), std::move(as)...}, ._cur = 0, }; }
+    constexpr auto vals(A a, As... as) 
+    { return ValsIter<A, std::tuple_size_v<std::tuple<A, As...>>>{ ._vals = {std::move(a), std::move(as)...}, ._cur = 0, }; }
 
 
     template<class... Is>
@@ -231,12 +234,49 @@ namespace viras {
       std::tuple<Thens...> _thens;
 
       template<class Cond, class Then>
-      auto else_if(Cond c, Then t) -> IfThen<decltype(std::tuple_cat(_conds, std::make_tuple(c))), Thens..., Then>;
+      auto else_if(Cond c, Then t) -> IfThen<decltype(std::tuple_cat(_conds, std::make_tuple(c))), Thens..., Then> {
+        return IfThen<decltype(std::tuple_cat(_conds, std::make_tuple(c))), Thens..., Then> {
+          ._conds = std::tuple_cat(std::move(_conds), std::make_tuple(std::move(c))),
+          ._thens = std::tuple_cat(std::move(_thens), std::make_tuple(std::move(t))),
+        };
+      }
+
+      template<unsigned i, unsigned sz> 
+      struct TryIfThen {
+        template<class Out>
+        static std::optional<Out> apply(IfThen& self) {
+          if (std::get<i>(self._conds)()) {
+            return std::optional<Out>(Out(std::in_place_index_t<i>(), std::get<i>(self._thens)()));
+          } else {
+            return TryIfThen<i + 1, sz>::template apply<Out>(self);
+          }
+        };
+      };
+
+      template<unsigned sz>
+      struct TryIfThen<sz, sz> {
+        template<class Out>
+        static std::optional<Out> apply(IfThen& self) {
+          return {};
+        };
+      };
 
       template<class Else>
       auto else_(Else e) -> IfThenElseIter<
                          std::invoke_result_t<Thens>..., 
-                         std::invoke_result_t<Else>>;
+                         std::invoke_result_t<Else>> 
+      {
+        using Out = IfThenElseIter<std::invoke_result_t<Thens>..., 
+                                  std::invoke_result_t<Else>>;
+        using Var = std::variant<std::invoke_result_t<Thens>..., 
+                                 std::invoke_result_t<Else>>;
+        auto var = TryIfThen<0, std::tuple_size_v<Conds>>::template apply<Var>(*this);
+        if (var) {
+          return Out{.self = std::move(*var)};
+        } else {
+          return Out{.self = Var(std::in_place_index_t<std::tuple_size_v<Conds>>(),e())};
+        }
+      }
     };
 
     template<class Cond, class Then>
@@ -245,17 +285,56 @@ namespace viras {
 
     template<class I, class... Is>
     struct ConcatIter {
+
       std::tuple<I, Is...> self;
       unsigned idx;
 
-      std::optional<value_type<I>> next();
-      // { return std::visit([](auto&& x){ return x.next(); }, self); }
+      template<unsigned i, unsigned sz> 
+      struct TryConcat {
+        static std::optional<value_type<I>> apply(ConcatIter& self) {
+          if (self.idx == i) {
+            auto out = std::get<i>(self.self).next();
+            if (out) {
+              return out;
+            } else {
+              self.idx++;
+            }
+          }
+          return TryConcat<i + 1, sz>::apply(self);
+        }
+      };
+
+      template<unsigned sz>
+      struct TryConcat<sz, sz> {
+        static std::optional<value_type<I>> apply(ConcatIter& self) {
+          return {};
+        };
+      };
+
+      std::optional<value_type<I>> next()
+      { return TryConcat<0, std::tuple_size_v<std::tuple<I, Is...>>>::apply(*this); }
     };
 
     template<class... Is>
     ConcatIter<Is...> concat(Is... is) 
     { return ConcatIter<Is...> { std::make_tuple(std::move(is)...) }; }
 
+    template<class T>
+    struct NatIter {
+      T _cur;
+
+      std::optional<T> next() {
+        auto out = _cur;
+        _cur = _cur + 1;
+        return out;
+      }
+    };
+
+
+    template<class T>
+    NatIter<T> nat_iter() {
+      return NatIter<T> { ._cur = T(0) };
+    }
   } // namespace iter
 
   enum class PredSymbol { Gt, Geq, Neq, Eq, };
@@ -362,6 +441,12 @@ namespace viras {
       Term distYminus;
       Term distYplus();
       std::vector<Break> breaks;
+      Term distXplus();
+      Term distXminus();
+      Numeral deltaX();
+
+      bool lim_pos_inf();
+      bool lim_neg_inf();
 
       WithConfig<Term> lim_at(WithConfig<Term> x0) { return WithConfig<Term> { x0.conf, x0.conf->subs(lim, x, x0), }; }
       WithConfig<Term> dseg(WithConfig<Term> x0) { return -(sslp * x0) + lim_at(x0); }
@@ -399,19 +484,14 @@ namespace viras {
     };
 
     auto intersectGrid(Break s_pZ, Bound l, Term t, Numeral k, Bound r) {
-      auto N = iter::closure([this, n = numeral(0).inner, one = numeral(1)]() mutable {
-          auto out = n;
-          n = n + one;
-          return std::optional(wrapConfig(out));
-       });
-      auto p  = wrapConfig(s_pZ.p);
+      auto p = wrapConfig(s_pZ.p);
       auto start = [&]() {
         switch(l) {
           case Bound::Open:   return grid_floor(t + p, s_pZ);
           case Bound::Closed: return grid_ceil(t, s_pZ);
         };
       }();
-      return std::move(N) 
+      return iter::nat_iter<Numeral>()
         | iter::take_while([r,p,k](auto n) -> bool { 
             switch(r) {
               case Bound::Open: return (*n) * p < k; 
@@ -535,17 +615,10 @@ namespace viras {
     public:
       static VirtualTerm minusInf();
       static VirtualTerm plusEpsilon(Term t);
+      static VirtualTerm plusEpsilon(VirtualTerm t);
       static VirtualTerm plain(Term t);
-    };
-
-    class ElimSetIter2 {
-    public:
-      std::optional<VirtualTerm> next();
-    };
-
-    class ElimSetIter {
-    public:
-      std::optional<VirtualTerm> next();
+      static VirtualTerm periodic(Break b);
+      static VirtualTerm periodic(Term b, Numeral p);
     };
 
 #define if_then_(x, y) if_then([&]() { return x; }, [&]() { return y; }) 
@@ -557,22 +630,63 @@ namespace viras {
     {
       auto t = analyse(_config.term_of_literal(lit), x);
       auto symbol = _config.symbol_of_literal(lit);
+      auto isIneq = [](auto symbol) { return (symbol == PredSymbol::Geq || symbol == PredSymbol::Gt); };
+      using VT = VirtualTerm;
 
       return iter::if_then_(t.breaks.empty(), 
-                           iter::if_then_(t.sslp == 0              , iter::const_size(VirtualTerm::minusInf()))
-                                 else_if_(symbol == PredSymbol::Neq, iter::const_size(VirtualTerm::minusInf(), VirtualTerm::plusEpsilon(t.zero(term(0)))))
-                                 else_if_(symbol == PredSymbol:: Eq, iter::const_size(VirtualTerm::plain(t.zero(term(0)))))
-                                 else_if_(t.sslp < 0               , iter::const_size(VirtualTerm::minusInf()))
-                                 else_if_(symbol == PredSymbol::Geq, iter::const_size(VirtualTerm::plain(t.zero(term(0)))))
-                                 else_is_(symbol == PredSymbol::Gt , iter::const_size(VirtualTerm::plusEpsilon(t.zero(term(0))))))
+                           iter::if_then_(t.sslp == 0              , iter::vals(VT::minusInf()))
+                                 else_if_(symbol == PredSymbol::Neq, iter::vals(VT::minusInf(), VT::plusEpsilon(t.zero(term(0)))))
+                                 else_if_(symbol == PredSymbol:: Eq, iter::vals(VT::plain(t.zero(term(0)))))
+                                 else_if_(t.sslp < 0               , iter::vals(VT::minusInf()))
+                                 else_if_(symbol == PredSymbol::Geq, iter::vals(VT::plain(t.zero(term(0)))))
+                                 else_is_(symbol == PredSymbol::Gt , iter::vals(VT::plusEpsilon(t.zero(term(0))))))
 
                    else_is_(!t.breaks.empty(), [&]() { 
-                       auto ebreak       = ElimSetIter{};
-                       auto eseg         = ElimSetIter{};
-                       auto ebound_plus  = ElimSetIter{};
-                       auto ebound_minus = ElimSetIter{};
-                       return iter::if_then_(t.periodic(), iter::concat(ebreak, eseg))
-                                    else____(              iter::concat(ebreak, eseg, ebound_plus, ebound_minus));
+                       auto ebreak       = [&]() { return 
+                         iter::if_then_(t.periodic(), 
+                                        iter::array_ptr(t.breaks) 
+                                          | iter::map([&](auto* b) { return VT::periodic(*b); }) )
+
+                               else____(iter::array_ptr(t.breaks) 
+                                          | iter::flat_map([&](auto* b) { return intersectGrid(*b, Bound::Open, t.distXminus(), t.deltaX(), Bound::Open); })
+                                          | iter::map([](auto t) { return VT::plain(t); }) )
+                       ; };
+
+                       auto breaks_plus_epsilon = [&]() { return iter::array_ptr(t.breaks) | iter::map([](auto* b) { return VT::plusEpsilon(VT::periodic(*b)); }); };
+
+                       auto ezero = [&]() { return 
+                          iter::if_then_(t.periodic(), 
+                                         iter::array_ptr(t.breaks) 
+                                           | iter::map([&](auto* b) { return VT::periodic(t.zero(wrapConfig(b->t)), b->p); }))
+
+                                else_if_(t.oslp == t.sslp,
+                                         iter::array_ptr(t.breaks) 
+                                           | iter::map([&](auto* b) { return VT::plain(t.zero(wrapConfig(b->t))); }))
+
+                                else____(iter::array_ptr(t.breaks) 
+                                           | iter::flat_map([&](auto* b) { return intersectGrid(Break { .t=t.zero(wrapConfig(b->t)), .p=(1 - t.oslp / t.sslp) },
+                                                                                                Bound::Open, t.distXminus(), t.deltaX(), Bound::Open); })
+                                           | iter::map([&](auto t) { return VT::plain(t); }))
+                                         
+                       ; };
+                       auto eseg         = [&]() { return 
+                           iter::if_then_(t.sslp == 0 || ( t.sslp < 0 && isIneq(symbol)), 
+                                          breaks_plus_epsilon())
+                                 else_if_(t.sslp >  0 && symbol == PredSymbol::Geq, iter::concat(breaks_plus_epsilon(), ezero()))
+                                 else_if_(t.sslp >  0 && symbol == PredSymbol::Gt , iter::concat(breaks_plus_epsilon(), ezero() | iter::map([](auto x) { return VT::plusEpsilon(x); })))
+                                 else_if_(t.sslp != 0 && symbol == PredSymbol::Neq, iter::concat(breaks_plus_epsilon(), ezero() | iter::map([](auto x) { return VT::plusEpsilon(x); })))
+                                 else_is_(t.sslp != 0 && symbol == PredSymbol::Eq,  ezero())
+                       ; };
+                       auto ebound_plus  = [&]() { return 
+                           iter::if_then_(t.lim_pos_inf(), iter::vals(VT::plain(t.distXplus()), VT::plusEpsilon(t.distXplus())))
+                                 else____(                 iter::vals(VT::plain(t.distXplus())                                         )); };
+
+                       auto ebound_minus = [&]() { return 
+                           iter::if_then_(t.lim_neg_inf(), iter::vals(VT::plain(t.distXplus()), VT::minusInf()))
+                                 else____(                 iter::vals(VT::plain(t.distXplus()))) ; };
+
+                       return iter::if_then_(t.periodic(), iter::concat(ebreak(), eseg()))
+                                    else____(              iter::concat(ebreak(), eseg(), ebound_plus(), ebound_minus()));
                    }());
 
     }
@@ -581,13 +695,6 @@ namespace viras {
     {
       return iter::array(lits) 
         | iter::flat_map([&](auto* lit) { return elim_set(x, lit); });
-      // return iter::if_then([&](){ return  })
-      // return iter::if_then([](){ return true; }, []() { return ElimSetIter { }; })
-      //               .else_if([](){ return true; }, []() { return ElimSetIter2 { }; })
-      //               .else_([]() { return ElimSetIter { }; });
-      // return iter::if_then([](){ return true; }, []() { return ElimSetIter { }; })
-      //               .else_if([](){ return true; }, []() { return ElimSetIter2 { }; })
-      //               .else_([]() { return ElimSetIter { }; });
     }
 
     class VsubsIter {
