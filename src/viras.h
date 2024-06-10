@@ -377,7 +377,9 @@ namespace viras {
     }
   };
 
-   // ADDITION
+  ///////////////////////////////////////
+  // PRIMARY OPERATORS
+  ///////////////////////////////////////
 
   template<class Config>
   CTerm<Config> operator+(CTerm<Config> lhs, CTerm<Config> rhs) 
@@ -387,64 +389,9 @@ namespace viras {
   }
 
   template<class Config>
-  CNumeral<Config> operator+(CNumeral<Config> lhs, CNumeral<Config> rhs) 
-  { return CNumeral<Config> { lhs.config, lhs.config->add(lhs.inner, rhs.inner)}; }
-
-
-  template<class Config>
-  CTerm<Config> operator+(CNumeral<Config> lhs, CTerm<Config> rhs) 
-  { return CTerm<Config> { rhs.config, lhs.config->term(lhs.inner)} + rhs; }
-
-  template<class Config>
-  CTerm<Config> operator+(CTerm<Config> lhs, CNumeral<Config> rhs) 
-  { return lhs + CTerm<Config> { rhs.config, rhs.config->term(rhs.inner), }; }
-
-  // template<class Config, class T>
-  // auto cNumeral(Config* config, Numeral n)
-  // { return config. }
-
-  template<class Config>
-  CTerm<Config> operator+(int lhs, CTerm<Config> rhs) 
-  { return CNumeral<Config> {rhs.config, rhs.config->numeral(lhs)} + rhs; }
-
-  template<class Config>
-  CTerm<Config> operator+(CTerm<Config> lhs, int rhs) 
-  { return lhs + CNumeral<Config> {lhs.config, lhs.config->numeral(rhs)}; }
-
-
-  template<class Config>
-  CTerm<Config> operator-(int lhs, CTerm<Config> rhs) 
-  { return CNumeral<Config> {rhs.config, rhs.config->numeral(lhs)} - rhs; }
-
-  template<class Config>
-  CTerm<Config> operator-(CTerm<Config> lhs, int rhs) 
-  { return lhs - CNumeral<Config> {lhs.config, lhs.config->numeral(rhs)}; }
-
-
-  template<class Config>
-  CNumeral<Config> operator+(int lhs, CNumeral<Config> rhs) 
-  { return CNumeral<Config> {rhs.config, rhs.config->numeral(lhs)} + rhs; }
-
-  template<class Config>
-  CNumeral<Config> operator+(CNumeral<Config> lhs, int rhs) 
-  { return lhs + CNumeral<Config> {lhs.config, lhs.config->numeral(rhs)}; }
-
-
-  template<class Config>
-  CNumeral<Config> operator-(int lhs, CNumeral<Config> rhs) 
-  { return CNumeral<Config> {rhs.config, rhs.config->numeral(lhs)} - rhs; }
-
-  template<class Config>
-  CNumeral<Config> operator-(CNumeral<Config> lhs, int rhs) 
-  { return lhs - CNumeral<Config> {lhs.config, lhs.config->numeral(rhs)}; }
-
-   // MULTIPLICATION
-
-  template<class Config>
   CTerm<Config> operator*(CNumeral<Config> lhs, CTerm<Config> rhs) 
   {
     SASSERT(lhs.config == rhs.config);
-    // return lhs.config->mul(lhs.inner, rhs.inner);
     return CTerm<Config> {lhs.config, lhs.config->mul(lhs.inner, rhs.inner)};
   }
 
@@ -455,6 +402,68 @@ namespace viras {
     return CNumeral<Config> {lhs.config, lhs.config->mul(lhs.inner, rhs.inner)};
   }
 
+  ///////////////////////////////////////
+  // LIFTED OPERATORS
+  ///////////////////////////////////////
+
+  template<class Config>
+  CNumeral<Config> operator+(CNumeral<Config> lhs, CNumeral<Config> rhs) 
+  { return CNumeral<Config> { lhs.config, lhs.config->add(lhs.inner, rhs.inner)}; }
+
+  template<class Config>
+  CTerm<Config> operator+(CNumeral<Config> lhs, CTerm<Config> rhs) 
+  { return CTerm<Config> { rhs.config, lhs.config->term(lhs.inner)} + rhs; }
+
+  template<class Config>
+  CTerm<Config> operator+(CTerm<Config> lhs, CNumeral<Config> rhs) 
+  { return lhs + CTerm<Config> { rhs.config, rhs.config->term(rhs.inner), }; }
+
+#define LIFT_NUMRAL_TO_TERM_L(function)                                            \
+  template<class Config>                                                                  \
+  auto function(CNumeral<Config> lhs, CTerm<Config> rhs)                                      \
+  { return function(CTerm<Config> {lhs.config, lhs.config->term(lhs)}, rhs); }      \
+
+#define LIFT_NUMRAL_TO_TERM_R(function)                                            \
+  template<class Config>                                                                  \
+  auto function(CTerm<Config> lhs, CNumeral<Config> rhs)                                      \
+  { return function(lhs, CTerm<Config> {rhs.config, rhs.config->term(rhs)}); }      \
+
+#define LIFT_INT_TO_NUMERAL(function, CType)                                              \
+  LIFT_INT_TO_NUMERAL_L(function, CType)                                                  \
+  LIFT_INT_TO_NUMERAL_R(function, CType)                                                  \
+
+
+#define LIFT_INT_TO_NUMERAL_L(function, CType)                                            \
+  template<class Config>                                                                  \
+  auto function(int lhs, CType<Config> rhs)                                      \
+  { return function(CNumeral<Config> {rhs.config, rhs.config->numeral(lhs)}, rhs); }      \
+
+#define LIFT_INT_TO_NUMERAL_R(function, CType)                                            \
+  template<class Config>                                                                  \
+  auto function(CType<Config> lhs, int rhs)                                      \
+  { return function(lhs, CNumeral<Config> {lhs.config, lhs.config->numeral(rhs)}); }      \
+
+#define LIFT_INT_TO_NUMERAL(function, CType)                                              \
+  LIFT_INT_TO_NUMERAL_L(function, CType)                                                  \
+  LIFT_INT_TO_NUMERAL_R(function, CType)                                                  \
+
+  LIFT_INT_TO_NUMERAL(operator+, CNumeral)
+  LIFT_INT_TO_NUMERAL(operator-, CNumeral)
+  LIFT_INT_TO_NUMERAL(operator*, CNumeral)
+
+  LIFT_INT_TO_NUMERAL(operator==, CNumeral)
+  LIFT_INT_TO_NUMERAL(operator!=, CNumeral)
+  LIFT_INT_TO_NUMERAL(operator<=, CNumeral)
+  LIFT_INT_TO_NUMERAL(operator>=, CNumeral)
+  LIFT_INT_TO_NUMERAL(operator< , CNumeral)
+  LIFT_INT_TO_NUMERAL(operator> , CNumeral)
+
+  LIFT_INT_TO_NUMERAL(operator+, CTerm)
+  LIFT_INT_TO_NUMERAL(operator-, CTerm)
+  LIFT_INT_TO_NUMERAL_L(operator*, CTerm)
+
+
+   // MULTIPLICATION
    // DIVISION
 
   template<class Config>
@@ -465,44 +474,28 @@ namespace viras {
   CNumeral<Config> operator/(CNumeral<Config> lhs, CNumeral<Config> rhs) 
   { return CNumeral<Config>{ rhs.config, rhs.config->inverse(rhs.inner) } * lhs; }
 
-
-  template<class Config>
-  CTerm<Config> operator/(CTerm<Config> lhs, int rhs) 
-  { return lhs / CNumeral<Config> { lhs.config, lhs.config->numeral(rhs) }; }
-
-  template<class Config>
-  CNumeral<Config> operator/(CNumeral<Config> lhs, int rhs) 
-  { return lhs / CNumeral<Config> { lhs.config, lhs.config->numeral(rhs) }; }
-
-  template<class Config>
-  CNumeral<Config> operator/(int lhs, CNumeral<Config> rhs) 
-  { return CNumeral<Config> { rhs.config, rhs.config->numeral(lhs)} / rhs; }
+  LIFT_INT_TO_NUMERAL_R(operator/, CTerm)
+  LIFT_INT_TO_NUMERAL(operator/, CNumeral)
 
    // MINUS
 
-  template<class Config>
-  CTerm<Config> operator-(CTerm<Config> x) 
-  { return -1 * x; }
+#define DEF_UMINUS(CType) \
+  template<class Config> \
+  CType<Config> operator-(CType<Config> x)  \
+  { return -1 * x; } \
 
-  template<class Config>
-  CNumeral<Config> operator-(CNumeral<Config> x) 
-  { return -1 * x; }
+DEF_UMINUS(CNumeral)
+DEF_UMINUS(CTerm)
 
-  template<class Config>
-  CTerm<Config> operator-(CTerm<Config> x, CTerm<Config> y) 
-  { return x + -y; }
+#define DEF_BMINUS(T1, T2) \
+  template<class Config> \
+  auto operator-(T1<Config> x, T2<Config> y)  \
+  { return x + -y; } \
 
-  template<class Config>
-  CNumeral<Config> operator-(CNumeral<Config> x, CNumeral<Config> y) 
-  { return x + -y; }
-
-  template<class Config>
-  CTerm<Config> operator-(CNumeral<Config> x, CTerm<Config> y) 
-  { return x + -y; }
-
-  template<class Config>
-  CTerm<Config> operator-(CTerm<Config> x, CNumeral<Config> y) 
-  { return x + -y; }
+DEF_BMINUS(CNumeral, CNumeral)
+DEF_BMINUS(CTerm   , CNumeral)
+DEF_BMINUS(CNumeral, CTerm   )
+DEF_BMINUS(CTerm   , CTerm   )
 
    // ABS
 
@@ -515,7 +508,6 @@ namespace viras {
 
   template<class Config>
   CNumeral<Config> den(CNumeral<Config> x);
-
 
   template<class Config>
   CNumeral<Config> lcm(CNumeral<Config> l, CNumeral<Config> r);
@@ -558,30 +550,14 @@ namespace viras {
 
   // TODO use config->equal etc for this
 
-#define INT_CMP(OP) \
-  template<class Config> \
-  bool operator OP (CNumeral<Config> lhs, int rhs) \
-  { return lhs OP CNumeral <Config> { lhs.config, lhs.config->numeral(rhs), }; } \
- \
-  template<class Config> \
-  bool operator OP (int lhs, CNumeral<Config> rhs) \
-  { return CNumeral <Config> { rhs.config, rhs.config->numeral(lhs), } == rhs; } \
-
-  INT_CMP(==)
-  INT_CMP(!=)
-  INT_CMP(<=)
-  INT_CMP(>=)
-  INT_CMP(<)
-  INT_CMP(>)
-
-  template<class Config>
-  CTerm<Config> operator*(int lhs, CTerm<Config> rhs)
-  { return CNumeral<Config> { rhs.config, rhs.config->numeral(lhs), } * rhs; } 
-
-  template<class Config>
-  CNumeral<Config> operator*(int lhs, CNumeral<Config> rhs)
-  { return CNumeral<Config> { rhs.config, rhs.config->numeral(lhs), } * rhs; } 
-
+#define INT_CMP(OP)                                                                       \
+  template<class Config>                                                                  \
+  bool operator OP (CNumeral<Config> lhs, int rhs)                                        \
+  { return lhs OP CNumeral <Config> { lhs.config, lhs.config->numeral(rhs), }; }          \
+                                                                                          \
+  template<class Config>                                                                  \
+  bool operator OP (int lhs, CNumeral<Config> rhs)                                        \
+  { return CNumeral <Config> { rhs.config, rhs.config->numeral(lhs), } OP rhs; }          \
 
   template<class Config>
   class Viras {
@@ -596,69 +572,6 @@ namespace viras {
     template<class... Args>
     Viras(Args... args) : _config(args...) { };
     ~Viras() {};
-
-//     template<class C>
-//     struct WithConfig {
-//       Config* conf;
-//       C inner;
-//       operator C&() { return inner; }
-//       operator C const&() const { return inner; }
-//     };
-//
-//     template<class T>
-//     static WithConfig<T> withConfig(Config* c, T inner)
-//     { return WithConfig<T> { c, std::move(inner) }; }
-//
-// #define BIN_OP_WITH_CONFIG(OP, op_name)                                                   \
-//     template<class R>                                                                     \
-//     friend auto operator OP(int lhs, WithConfig<R> rhs)                                   \
-//     { return rhs.conf->numeral(lhs) OP rhs; }                                             \
-//                                                                                           \
-//     template<class L>                                                                     \
-//     friend auto operator OP(WithConfig<L> lhs, int rhs)                                   \
-//     { return lhs OP lhs.conf->numeral(rhs); }                                             \
-//                                                                                           \
-//     template<class L, class R>                                                            \
-//     friend auto operator OP(WithConfig<L> lhs, R rhs)                                     \
-//     { return withConfig(lhs.conf, lhs.conf->op_name(lhs.inner, rhs)); }                   \
-//                                                                                           \
-//     template<class L, class R>                                                            \
-//     friend auto operator OP(L lhs, WithConfig<R> rhs)                                     \
-//     { return withConfig(rhs.conf, rhs.conf->op_name(lhs, rhs.inner)); }                   \
-//                                                                                           \
-//     template<class L, class R>                                                            \
-//     friend auto operator OP(WithConfig<L> l, WithConfig<R> r)                             \
-//     { return l OP r.inner; }                                                              \
-//
-//     BIN_OP_WITH_CONFIG(*, mul);
-//     BIN_OP_WITH_CONFIG(+, add);
-//     BIN_OP_WITH_CONFIG(/, div);
-//
-//     template<class T>
-//     friend auto operator-(WithConfig<T> self) 
-//     { return withConfig(self.conf, self.conf->minus(self.inner)); }
-//
-//     template<class L, class R>
-//     friend auto operator-(WithConfig<L> lhs, WithConfig<R> rhs)
-//     { return lhs.inner + rhs; }
-//
-//     template<class L, class R>
-//     friend auto operator-(WithConfig<R> lhs, R rhs)
-//     { return withConfig(lhs.conf, lhs.conf->add(lhs.inner, lhs.conf->minus(rhs))); }
-//
-//     template<class L, class R>
-//     friend auto operator-(L lhs, WithConfig<R> rhs)
-//     { return withConfig(rhs.conf, rhs.conf->add(lhs, rhs.conf->minus(rhs.inner))); }
-    //
-    //
-    // template<class T>
-    // auto floor(WithConfig<T> self) { return withConfig(self.conf, self.conf->floor(self.inner)); }
-    //
-    // template<class T>
-    // auto ceil(WithConfig<T> self) { return -floor(-self); };
-    //
-    // WithConfig<Term> floor(Term t) { return floor(wrapConfig(t)); }
-    // Term ceil(Term t) { return ceil(wrapConfig(t)); }
 
     struct Break {
       Term t;
