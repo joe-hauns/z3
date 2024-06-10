@@ -546,10 +546,6 @@ DEF_BMINUS(CTerm   , CTerm   )
   bool operator>(CNumeral<Config> lhs, CNumeral<Config> rhs) 
   { return rhs < lhs; }
 
-   // Int ops
-
-  // TODO use config->equal etc for this
-
 #define INT_CMP(OP)                                                                       \
   template<class Config>                                                                  \
   bool operator OP (CNumeral<Config> lhs, int rhs)                                        \
@@ -584,9 +580,6 @@ DEF_BMINUS(CTerm   , CTerm   )
     Term grid_ceil (Term t, Break s_pZ) { return t + rem(s_pZ.t - t, s_pZ.p); }
     Term grid_floor(Term t, Break s_pZ) { return t - rem(t - s_pZ.t, s_pZ.p); }
 
-    // Term grid_ceil (Term t, Break s_pZ) { return grid_ceil (t, s_pZ); }
-    // Term grid_floor(Term t, Break s_pZ) { return grid_floor(t, s_pZ); }
-
     struct LiraTerm {
       Term self;
       Var x;
@@ -596,7 +589,7 @@ DEF_BMINUS(CTerm   , CTerm   )
       Numeral per;
       Numeral deltaY;
       Term distYminus;
-      Term distYplus();// { return distYminus + deltaY; }
+      Term distYplus() { return distYminus + deltaY; }
       std::vector<Break> breaks;
       Term distXplus();
       Term distXminus();
@@ -610,10 +603,6 @@ DEF_BMINUS(CTerm   , CTerm   )
       Term zero(Term x0) { return x0 - lim_at(x0) / sslp; }
       bool periodic() { return oslp == 0; }
     };
-
-    // template<class T> WithConfig<T> wrapConfig(T t) { return WithConfig<T> { &_config, std::move(t) }; }
-    // template<class T> WithConfig<T> wrapConfig(WithConfig<T> t) { return t; }
-
 
     template<class IfVar, class IfOne, class IfMul, class IfAdd, class IfFloor>
     auto matchTerm(Term t, 

@@ -358,11 +358,15 @@ public:
     bool is_odd() const { 
         return !is_even(); 
     }
-    
-    friend inline rational floor(rational const & r) {
+ 
+    rational floor() const {
         rational f;
-        rational::m().floor(r.m_val, f.m_val);
+        rational::m().floor(m_val, f.m_val);
         return f;
+    }
+     
+    friend inline rational floor(rational const & r) {
+        return r.floor();
     }
 
     friend inline rational ceil(rational const & r) {

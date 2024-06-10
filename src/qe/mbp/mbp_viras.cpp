@@ -27,6 +27,8 @@ Author:
 #include "model/model_v2_pp.h"
 #include "util/debug.h"
 #include "viras.h"
+#include "util/rational.h"
+#include "ast/rewriter/expr_replacer.h"
 
 using namespace viras;
 
@@ -38,7 +40,8 @@ struct SugaryConfig {
 struct z3_viras_config {
   ast_manager& m;
   arith_util m_arith;
-  z3_viras_config(ast_manager* m) :m(*m), m_arith(*m) {}
+  expr_replacer* const repl;
+  z3_viras_config(ast_manager* m) :m(*m), m_arith(*m), repl(mk_default_expr_replacer(*m, /* proofs */ false)) {}
 
   using Literals = expr_ref_vector; 
   using Literal  = expr*; 
@@ -49,31 +52,61 @@ struct z3_viras_config {
   Numeral numeral(int);
   Numeral lcm(Numeral l, Numeral r);
 
-  Numeral mul(Numeral l, Numeral r);
-  Numeral add(Numeral l, Numeral r);
-  Numeral floor(Numeral t);
+  Numeral mul(Numeral l, Numeral r) { return l * r; }
+  Numeral add(Numeral l, Numeral r) { return l + r; }
+  Numeral floor(Numeral t) { return t.floor(); }
 
-  Term mul(Numeral l, Term r);
-  Term add(Term l, Term r);
-  Term floor(Term t);
+  Term term(Numeral n) { return m_arith.mk_numeral(n, /* is_int */ false); }
+  Term term(Var v) { return v; }
 
-  Term term(Numeral n);
-  Term term(Var v);
-  Numeral inverse(Numeral n);
+  Term mul(Numeral l, Term r) { return m_arith.mk_mul(term(l), r); }
+  Term add(Term l, Term r) { return m_arith.mk_add(l,r); }
+  Term floor(Term t) { return m_arith.mk_to_int(t); }
 
-  bool less(Numeral, Numeral);
-  bool leq(Numeral, Numeral);
+  Numeral inverse(Numeral n) { return 1 / n;  }
 
-  Term subs(Term term, Var var, Term by);
+  bool less(Numeral l, Numeral r) { return l < r; }
+  bool leq(Numeral l, Numeral r) { return l <= r; }
 
-  Term term_of_literal(Literal l);
-  PredSymbol symbol_of_literal(Literal l);
+  Term subs(Term term, Var var, Term by) {
+    expr_ref result(term, m);
+    repl->apply_substitution(var, by, result);
+    return result;
+  }
+
+  std::pair<PredSymbol, Term> __normalize_lit(Literal l) {
+    PredSymbol sym;
+    expr* a0;
+    expr* a1;
+    expr* a2;
+    if (m_arith.is_gt(l, a0, a1) 
+        || m_arith.is_lt(l, a1, a0)) {
+      sym = PredSymbol::Gt;
+    } else if (m_arith.is_ge(l, a0, a1) 
+            || m_arith.is_le(l, a1, a0)) {
+      sym = PredSymbol::Geq;
+    } else if (m.is_eq(l, a0, a1) ) {
+      sym = PredSymbol::Eq;
+    } else if (m.is_not(l, a2) && m.is_eq(a2, a0, a1) ) {
+      sym = PredSymbol::Neq;
+    } else {
+      SASSERT(false); // TODO
+      sym = PredSymbol::Neq;
+    }
+    return std::make_pair(sym, m_arith.mk_add(a0, m_arith.mk_uminus(a1)));
+  }
+
+  PredSymbol symbol_of_literal(Literal l) 
+  { return __normalize_lit(l).first; }
+
+  Term term_of_literal(Literal l)
+  { return __normalize_lit(l).second; }
 
   /* the numerator of some rational */
-  Numeral num(Numeral l);
+  Numeral num(Numeral l) { return numerator(l); }
 
   /* the denomiantor of some rational */
-  Numeral den(Numeral l);
+  Numeral den(Numeral l) { return denominator(l); }
 
   size_t literals_size(Literals const& l) { return l.size(); }
   Literal literals_get(Literals const& l, size_t idx) { return l[idx]; }
