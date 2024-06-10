@@ -49,7 +49,7 @@ struct z3_viras_config {
   using Term     = expr*;
   using Numeral  = rational;
 
-  Numeral numeral(int);
+  Numeral numeral(int i) { return rational(i); }
   Numeral lcm(Numeral l, Numeral r);
 
   Numeral mul(Numeral l, Numeral r) { return l * r; }
