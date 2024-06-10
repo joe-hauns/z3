@@ -1,4 +1,3 @@
-#include "muz/rel/dl_lazy_table.h"
 #include <optional>
 
 #pragma once
@@ -242,19 +241,19 @@ namespace viras {
       }
 
       template<unsigned i, unsigned sz> 
-      struct TryIfThen {
+      struct __TryIfThen {
         template<class Out>
         static std::optional<Out> apply(IfThen& self) {
           if (std::get<i>(self._conds)()) {
             return std::optional<Out>(Out(std::in_place_index_t<i>(), std::get<i>(self._thens)()));
           } else {
-            return TryIfThen<i + 1, sz>::template apply<Out>(self);
+            return __TryIfThen<i + 1, sz>::template apply<Out>(self);
           }
         };
       };
 
       template<unsigned sz>
-      struct TryIfThen<sz, sz> {
+      struct __TryIfThen<sz, sz> {
         template<class Out>
         static std::optional<Out> apply(IfThen& self) {
           return {};
@@ -270,7 +269,7 @@ namespace viras {
                                   std::invoke_result_t<Else>>;
         using Var = std::variant<std::invoke_result_t<Thens>..., 
                                  std::invoke_result_t<Else>>;
-        auto var = TryIfThen<0, std::tuple_size_v<Conds>>::template apply<Var>(*this);
+        auto var = __TryIfThen<0, std::tuple_size_v<Conds>>::template apply<Var>(*this);
         if (var) {
           return Out{.self = std::move(*var)};
         } else {
@@ -290,7 +289,7 @@ namespace viras {
       unsigned idx;
 
       template<unsigned i, unsigned sz> 
-      struct TryConcat {
+      struct __TryConcat {
         static std::optional<value_type<I>> apply(ConcatIter& self) {
           if (self.idx == i) {
             auto out = std::get<i>(self.self).next();
@@ -300,19 +299,19 @@ namespace viras {
               self.idx++;
             }
           }
-          return TryConcat<i + 1, sz>::apply(self);
+          return __TryConcat<i + 1, sz>::apply(self);
         }
       };
 
       template<unsigned sz>
-      struct TryConcat<sz, sz> {
+      struct __TryConcat<sz, sz> {
         static std::optional<value_type<I>> apply(ConcatIter& self) {
           return {};
         };
       };
 
       std::optional<value_type<I>> next()
-      { return TryConcat<0, std::tuple_size_v<std::tuple<I, Is...>>>::apply(*this); }
+      { return __TryConcat<0, std::tuple_size_v<std::tuple<I, Is...>>>::apply(*this); }
     };
 
     template<class... Is>
@@ -332,20 +331,265 @@ namespace viras {
 
 
     template<class T>
-    NatIter<T> nat_iter() {
-      return NatIter<T> { ._cur = T(0) };
+    NatIter<T> nat_iter(T first = T(0)) {
+      return NatIter<T> { ._cur = std::move(first) };
     }
   } // namespace iter
 
   enum class PredSymbol { Gt, Geq, Neq, Eq, };
 
+  template<class Config, class T>
+  struct WithConfig { 
+    Config* config; 
+    T inner; 
+    friend bool operator==(WithConfig l, WithConfig r) 
+    { 
+      SASSERT(l.config == r.config);
+      return l.inner == r.inner;
+    }
+    friend bool operator!=(WithConfig l, WithConfig r) 
+    { return !(l == r); }
+  };
+
+  template<class Config>
+  struct CTerm : public WithConfig<Config, typename Config::Term> { };
+
+  template<class Config>
+  struct CNumeral : public WithConfig<Config, typename Config::Numeral> {};
+
+  template<class Config>
+  struct CVar : public WithConfig<Config, typename Config::Var> {};
+
+  template<class Config>
+  struct CLiteral : public WithConfig<Config, typename Config::Literal> {
+    CTerm<Config> term() const
+    { return CTerm<Config> {this->config, this->config->term_of_literal(this->inner)}; }
+
+    PredSymbol symbol() const
+    { return this->config->symbol_of_literal(this->inner); }
+  };
+
+  template<class Config>
+  struct CLiterals : public WithConfig<Config, typename Config::Literals> {
+    auto size() const { return this->config->literals_size(this->inner); }
+    auto operator[](size_t idx) const { 
+      return CLiteral<Config> { this->config, this->config->literals_get(this->inner, idx) }; 
+    }
+  };
+
+   // ADDITION
+
+  template<class Config>
+  CTerm<Config> operator+(CTerm<Config> lhs, CTerm<Config> rhs) 
+  {
+    SASSERT(lhs.config == rhs.config);
+    return CTerm<Config> {lhs.config, lhs.config->add(lhs.inner, rhs.inner)};
+  }
+
+  template<class Config>
+  CNumeral<Config> operator+(CNumeral<Config> lhs, CNumeral<Config> rhs) 
+  { return CNumeral<Config> { lhs.config, lhs.config->add(lhs.inner, rhs.inner)}; }
+
+
+  template<class Config>
+  CTerm<Config> operator+(CNumeral<Config> lhs, CTerm<Config> rhs) 
+  { return CTerm<Config> { rhs.config, lhs.config->term(lhs.inner)} + rhs; }
+
+  template<class Config>
+  CTerm<Config> operator+(CTerm<Config> lhs, CNumeral<Config> rhs) 
+  { return lhs + CTerm<Config> { rhs.config, rhs.config->term(rhs.inner), }; }
+
+  // template<class Config, class T>
+  // auto cNumeral(Config* config, Numeral n)
+  // { return config. }
+
+  template<class Config>
+  CTerm<Config> operator+(int lhs, CTerm<Config> rhs) 
+  { return CNumeral<Config> {rhs.config, rhs.config->numeral(lhs)} + rhs; }
+
+  template<class Config>
+  CTerm<Config> operator+(CTerm<Config> lhs, int rhs) 
+  { return lhs + CNumeral<Config> {lhs.config, lhs.config->numeral(rhs)}; }
+
+
+  template<class Config>
+  CTerm<Config> operator-(int lhs, CTerm<Config> rhs) 
+  { return CNumeral<Config> {rhs.config, rhs.config->numeral(lhs)} - rhs; }
+
+  template<class Config>
+  CTerm<Config> operator-(CTerm<Config> lhs, int rhs) 
+  { return lhs - CNumeral<Config> {lhs.config, lhs.config->numeral(rhs)}; }
+
+
+  template<class Config>
+  CNumeral<Config> operator+(int lhs, CNumeral<Config> rhs) 
+  { return CNumeral<Config> {rhs.config, rhs.config->numeral(lhs)} + rhs; }
+
+  template<class Config>
+  CNumeral<Config> operator+(CNumeral<Config> lhs, int rhs) 
+  { return lhs + CNumeral<Config> {lhs.config, lhs.config->numeral(rhs)}; }
+
+
+  template<class Config>
+  CNumeral<Config> operator-(int lhs, CNumeral<Config> rhs) 
+  { return CNumeral<Config> {rhs.config, rhs.config->numeral(lhs)} - rhs; }
+
+  template<class Config>
+  CNumeral<Config> operator-(CNumeral<Config> lhs, int rhs) 
+  { return lhs - CNumeral<Config> {lhs.config, lhs.config->numeral(rhs)}; }
+
+   // MULTIPLICATION
+
+  template<class Config>
+  CTerm<Config> operator*(CNumeral<Config> lhs, CTerm<Config> rhs) 
+  {
+    SASSERT(lhs.config == rhs.config);
+    // return lhs.config->mul(lhs.inner, rhs.inner);
+    return CTerm<Config> {lhs.config, lhs.config->mul(lhs.inner, rhs.inner)};
+  }
+
+  template<class Config>
+  CNumeral<Config> operator*(CNumeral<Config> lhs, CNumeral<Config> rhs) 
+  {
+    SASSERT(lhs.config == rhs.config);
+    return CNumeral<Config> {lhs.config, lhs.config->mul(lhs.inner, rhs.inner)};
+  }
+
+   // DIVISION
+
+  template<class Config>
+  CTerm<Config> operator/(CTerm<Config> lhs, CNumeral<Config> rhs) 
+  { return (1 / rhs) * lhs; }
+
+  template<class Config>
+  CNumeral<Config> operator/(CNumeral<Config> lhs, CNumeral<Config> rhs) 
+  { return CNumeral<Config>{ rhs.config, rhs.config->inverse(rhs.inner) } * lhs; }
+
+
+  template<class Config>
+  CTerm<Config> operator/(CTerm<Config> lhs, int rhs) 
+  { return lhs / CNumeral<Config> { lhs.config, lhs.config->numeral(rhs) }; }
+
+  template<class Config>
+  CNumeral<Config> operator/(CNumeral<Config> lhs, int rhs) 
+  { return lhs / CNumeral<Config> { lhs.config, lhs.config->numeral(rhs) }; }
+
+  template<class Config>
+  CNumeral<Config> operator/(int lhs, CNumeral<Config> rhs) 
+  { return CNumeral<Config> { rhs.config, rhs.config->numeral(lhs)} / rhs; }
+
+   // MINUS
+
+  template<class Config>
+  CTerm<Config> operator-(CTerm<Config> x) 
+  { return -1 * x; }
+
+  template<class Config>
+  CNumeral<Config> operator-(CNumeral<Config> x) 
+  { return -1 * x; }
+
+  template<class Config>
+  CTerm<Config> operator-(CTerm<Config> x, CTerm<Config> y) 
+  { return x + -y; }
+
+  template<class Config>
+  CNumeral<Config> operator-(CNumeral<Config> x, CNumeral<Config> y) 
+  { return x + -y; }
+
+  template<class Config>
+  CTerm<Config> operator-(CNumeral<Config> x, CTerm<Config> y) 
+  { return x + -y; }
+
+  template<class Config>
+  CTerm<Config> operator-(CTerm<Config> x, CNumeral<Config> y) 
+  { return x + -y; }
+
+   // ABS
+
+  template<class Config>
+  CNumeral<Config> abs(CNumeral<Config> x) 
+  { return x < 0 ? -x : x; }
+
+  template<class Config>
+  CNumeral<Config> num(CNumeral<Config> x);
+
+  template<class Config>
+  CNumeral<Config> den(CNumeral<Config> x);
+
+
+  template<class Config>
+  CNumeral<Config> lcm(CNumeral<Config> l, CNumeral<Config> r);
+  // { return x < 0 ? -x : x; }
+
+   // floor
+
+  template<class Config>
+  CTerm<Config> floor(CTerm<Config> x) 
+  { return CTerm<Config> { x.config, x.config->floor(x.inner), }; }
+
+  template<class Config>
+  CTerm<Config> ceil(CTerm<Config> x) 
+  { return -floor(-x); }
+
+
+  template<class Config>
+  CNumeral<Config> floor(CNumeral<Config> x) 
+  { return CNumeral<Config> { x.config, x.config->floor(x.inner), }; }
+
+  // COMPARISIONS
+
+  template<class Config>
+  bool operator<=(CNumeral<Config> lhs, CNumeral<Config> rhs) 
+  { return lhs.config->leq(lhs.inner, rhs.inner); }
+
+  template<class Config>
+  bool operator<(CNumeral<Config> lhs, CNumeral<Config> rhs) 
+  { return lhs.config->less(lhs.inner, rhs.inner); }
+
+  template<class Config>
+  bool operator>=(CNumeral<Config> lhs, CNumeral<Config> rhs) 
+  { return rhs <= lhs; }
+
+  template<class Config>
+  bool operator>(CNumeral<Config> lhs, CNumeral<Config> rhs) 
+  { return rhs < lhs; }
+
+   // Int ops
+
+  // TODO use config->equal etc for this
+
+#define INT_CMP(OP) \
+  template<class Config> \
+  bool operator OP (CNumeral<Config> lhs, int rhs) \
+  { return lhs OP CNumeral <Config> { lhs.config, lhs.config->numeral(rhs), }; } \
+ \
+  template<class Config> \
+  bool operator OP (int lhs, CNumeral<Config> rhs) \
+  { return CNumeral <Config> { rhs.config, rhs.config->numeral(lhs), } == rhs; } \
+
+  INT_CMP(==)
+  INT_CMP(!=)
+  INT_CMP(<=)
+  INT_CMP(>=)
+  INT_CMP(<)
+  INT_CMP(>)
+
+  template<class Config>
+  CTerm<Config> operator*(int lhs, CTerm<Config> rhs)
+  { return CNumeral<Config> { rhs.config, rhs.config->numeral(lhs), } * rhs; } 
+
+  template<class Config>
+  CNumeral<Config> operator*(int lhs, CNumeral<Config> rhs)
+  { return CNumeral<Config> { rhs.config, rhs.config->numeral(lhs), } * rhs; } 
+
+
   template<class Config>
   class Viras {
-    using Term     = typename Config::Term;
-    using Numeral  = typename Config::Numeral;
-    using Var      = typename Config::Var;
-    using Literals = typename Config::Literals;
-    using Literal  = typename Config::Literal;
+    using Term     = CTerm<Config>;
+    using Numeral  = CNumeral<Config>;
+    using Var      = CVar<Config>;
+    using Literals = CLiterals<Config>;
+    using Literal  = CLiteral<Config>;
     Config _config;
   public:
 
@@ -353,82 +597,82 @@ namespace viras {
     Viras(Args... args) : _config(args...) { };
     ~Viras() {};
 
-    template<class C>
-    struct WithConfig {
-      Config* conf;
-      C inner;
-      operator C&() { return inner; }
-      operator C const&() const { return inner; }
-    };
-
-    template<class T>
-    static WithConfig<T> withConfig(Config* c, T inner)
-    { return WithConfig<T> { c, std::move(inner) }; }
-
-#define BIN_OP_WITH_CONFIG(OP, op_name)                                                   \
-    template<class R>                                                                     \
-    friend auto operator OP(int lhs, WithConfig<R> rhs)                                   \
-    { return rhs.conf->numeral(lhs) OP rhs; }                                             \
-                                                                                          \
-    template<class L>                                                                     \
-    friend auto operator OP(WithConfig<L> lhs, int rhs)                                   \
-    { return lhs OP lhs.conf->numeral(rhs); }                                             \
-                                                                                          \
-    template<class L, class R>                                                            \
-    friend auto operator OP(WithConfig<L> lhs, R rhs)                                     \
-    { return withConfig(lhs.conf, lhs.conf->op_name(lhs.inner, rhs)); }                   \
-                                                                                          \
-    template<class L, class R>                                                            \
-    friend auto operator OP(L lhs, WithConfig<R> rhs)                                     \
-    { return withConfig(rhs.conf, rhs.conf->op_name(lhs, rhs.inner)); }                   \
-                                                                                          \
-    template<class L, class R>                                                            \
-    friend auto operator OP(WithConfig<L> l, WithConfig<R> r)                             \
-    { return l OP r.inner; }                                                              \
-
-    BIN_OP_WITH_CONFIG(*, mul);
-    BIN_OP_WITH_CONFIG(+, add);
-    BIN_OP_WITH_CONFIG(/, div);
-
-    template<class T>
-    friend auto operator-(WithConfig<T> self) 
-    { return withConfig(self.conf, self.conf->minus(self.inner)); }
-
-    template<class L, class R>
-    friend auto operator-(WithConfig<L> lhs, WithConfig<R> rhs)
-    { return lhs.inner + rhs; }
-
-    template<class L, class R>
-    friend auto operator-(WithConfig<R> lhs, R rhs)
-    { return withConfig(lhs.conf, lhs.conf->add(lhs.inner, lhs.conf->minus(rhs))); }
-
-    template<class L, class R>
-    friend auto operator-(L lhs, WithConfig<R> rhs)
-    { return withConfig(rhs.conf, rhs.conf->add(lhs, rhs.conf->minus(rhs.inner))); }
-
-
-    template<class T>
-    auto floor(WithConfig<T> self) { return withConfig(self.conf, self.conf->floor(self.inner)); }
-
-    template<class T>
-    auto ceil(WithConfig<T> self) { return -floor(-self); };
-
-    WithConfig<Term> floor(Term t) { return floor(wrapConfig(t)); }
-    WithConfig<Term> ceil(Term t) { return ceil(wrapConfig(t)); }
+//     template<class C>
+//     struct WithConfig {
+//       Config* conf;
+//       C inner;
+//       operator C&() { return inner; }
+//       operator C const&() const { return inner; }
+//     };
+//
+//     template<class T>
+//     static WithConfig<T> withConfig(Config* c, T inner)
+//     { return WithConfig<T> { c, std::move(inner) }; }
+//
+// #define BIN_OP_WITH_CONFIG(OP, op_name)                                                   \
+//     template<class R>                                                                     \
+//     friend auto operator OP(int lhs, WithConfig<R> rhs)                                   \
+//     { return rhs.conf->numeral(lhs) OP rhs; }                                             \
+//                                                                                           \
+//     template<class L>                                                                     \
+//     friend auto operator OP(WithConfig<L> lhs, int rhs)                                   \
+//     { return lhs OP lhs.conf->numeral(rhs); }                                             \
+//                                                                                           \
+//     template<class L, class R>                                                            \
+//     friend auto operator OP(WithConfig<L> lhs, R rhs)                                     \
+//     { return withConfig(lhs.conf, lhs.conf->op_name(lhs.inner, rhs)); }                   \
+//                                                                                           \
+//     template<class L, class R>                                                            \
+//     friend auto operator OP(L lhs, WithConfig<R> rhs)                                     \
+//     { return withConfig(rhs.conf, rhs.conf->op_name(lhs, rhs.inner)); }                   \
+//                                                                                           \
+//     template<class L, class R>                                                            \
+//     friend auto operator OP(WithConfig<L> l, WithConfig<R> r)                             \
+//     { return l OP r.inner; }                                                              \
+//
+//     BIN_OP_WITH_CONFIG(*, mul);
+//     BIN_OP_WITH_CONFIG(+, add);
+//     BIN_OP_WITH_CONFIG(/, div);
+//
+//     template<class T>
+//     friend auto operator-(WithConfig<T> self) 
+//     { return withConfig(self.conf, self.conf->minus(self.inner)); }
+//
+//     template<class L, class R>
+//     friend auto operator-(WithConfig<L> lhs, WithConfig<R> rhs)
+//     { return lhs.inner + rhs; }
+//
+//     template<class L, class R>
+//     friend auto operator-(WithConfig<R> lhs, R rhs)
+//     { return withConfig(lhs.conf, lhs.conf->add(lhs.inner, lhs.conf->minus(rhs))); }
+//
+//     template<class L, class R>
+//     friend auto operator-(L lhs, WithConfig<R> rhs)
+//     { return withConfig(rhs.conf, rhs.conf->add(lhs, rhs.conf->minus(rhs.inner))); }
+    //
+    //
+    // template<class T>
+    // auto floor(WithConfig<T> self) { return withConfig(self.conf, self.conf->floor(self.inner)); }
+    //
+    // template<class T>
+    // auto ceil(WithConfig<T> self) { return -floor(-self); };
+    //
+    // WithConfig<Term> floor(Term t) { return floor(wrapConfig(t)); }
+    // Term ceil(Term t) { return ceil(wrapConfig(t)); }
 
     struct Break {
       Term t;
       Numeral p;
     };
 
-    WithConfig<Term> quot(WithConfig<Term> t, Numeral p) { return floor(t / p); }
-    WithConfig<Term> rem(WithConfig<Term> t, Numeral p) { return t - p * quot(t, p); }
+    Term quot(Term t, Numeral p) { return floor(t / p); }
+    Term rem(Term t, Numeral p) { return t - p * quot(t, p); }
 
-    WithConfig<Term> grid_ceil (WithConfig<Term> t, Break s_pZ) { return t + rem(s_pZ.t - t, s_pZ.p); }
-    WithConfig<Term> grid_floor(WithConfig<Term> t, Break s_pZ) { return t - rem(t - wrapConfig(s_pZ.t), s_pZ.p); }
+    Term grid_ceil (Term t, Break s_pZ) { return t + rem(s_pZ.t - t, s_pZ.p); }
+    Term grid_floor(Term t, Break s_pZ) { return t - rem(t - s_pZ.t, s_pZ.p); }
 
-    WithConfig<Term> grid_ceil (Term t, Break s_pZ) { return grid_ceil (wrapConfig(t), s_pZ); }
-    WithConfig<Term> grid_floor(Term t, Break s_pZ) { return grid_floor(wrapConfig(t), s_pZ); }
+    // Term grid_ceil (Term t, Break s_pZ) { return grid_ceil (t, s_pZ); }
+    // Term grid_floor(Term t, Break s_pZ) { return grid_floor(t, s_pZ); }
 
     struct LiraTerm {
       Term self;
@@ -439,7 +683,7 @@ namespace viras {
       Numeral per;
       Numeral deltaY;
       Term distYminus;
-      Term distYplus();
+      Term distYplus();// { return distYminus + deltaY; }
       std::vector<Break> breaks;
       Term distXplus();
       Term distXminus();
@@ -448,14 +692,14 @@ namespace viras {
       bool lim_pos_inf();
       bool lim_neg_inf();
 
-      WithConfig<Term> lim_at(WithConfig<Term> x0) { return WithConfig<Term> { x0.conf, x0.conf->subs(lim, x, x0), }; }
-      WithConfig<Term> dseg(WithConfig<Term> x0) { return -(sslp * x0) + lim_at(x0); }
-      WithConfig<Term> zero(WithConfig<Term> x0) { return x0 - lim_at(x0) / sslp; }
+      Term lim_at(Term x0) { return Term { x0.config, x0.config->subs(lim.inner, x.inner, x0.inner), }; }
+      Term dseg(Term x0) { return -(sslp * x0) + lim_at(x0); }
+      Term zero(Term x0) { return x0 - lim_at(x0) / sslp; }
       bool periodic() { return oslp == 0; }
     };
 
-    template<class T> WithConfig<T> wrapConfig(T t) { return WithConfig<T> { &_config, std::move(t) }; }
-    template<class T> WithConfig<T> wrapConfig(WithConfig<T> t) { return t; }
+    // template<class T> WithConfig<T> wrapConfig(T t) { return WithConfig<T> { &_config, std::move(t) }; }
+    // template<class T> WithConfig<T> wrapConfig(WithConfig<T> t) { return t; }
 
 
     template<class IfVar, class IfOne, class IfMul, class IfAdd, class IfFloor>
@@ -466,17 +710,19 @@ namespace viras {
         IfAdd   if_add, 
         IfFloor if_floor
         ) -> decltype(auto) {
-      return _config.matchTerm(t,
-        [&](auto x) { return wrapConfig(if_var(wrapConfig(x))); }, 
-        [&]() { return wrapConfig(if_one()); }, 
-        [&](auto l, auto r) { return wrapConfig(if_mul(wrapConfig(l),r)); }, 
-        [&](auto l, auto r) { return wrapConfig(if_add(wrapConfig(l),r)); }, 
-        [&](auto x) { return wrapConfig(if_floor(wrapConfig(x))); }
+      return _config.matchTerm(t.inner,
+        [&](auto x) { return if_var(CVar<Config>{ &_config, x }); }, 
+        [&]() { return if_one(); }, 
+        [&](auto l, auto r) { return if_mul(CNumeral<Config>{&_config, l},CTerm<Config>{&_config, r}); }, 
+        [&](auto l, auto r) { return if_add(CTerm<Config>{&_config, l},CTerm<Config>{&_config, r}); }, 
+        [&](auto x) { return if_floor(CTerm<Config>{&_config, x}); }
            );
     }
 
-    WithConfig<Numeral> numeral(int i) { return wrapConfig(_config.numeral(i)); }
-    WithConfig<Term>    term(int i)    { return wrapConfig(_config.term(numeral(i))); }
+    Numeral numeral(int i)  { return CNumeral<Config> { &_config, _config.numeral(i)}; }
+    Term    term(Numeral n) { return CTerm<Config>    { &_config, _config.term(n.inner) }; }
+    Term    term(Var v)     { return CTerm<Config>    { &_config, _config.term(v.inner) }; }
+    Term    term(int i)     { return term(numeral(i)); }
 
     enum class Bound {
       Open,
@@ -484,14 +730,14 @@ namespace viras {
     };
 
     auto intersectGrid(Break s_pZ, Bound l, Term t, Numeral k, Bound r) {
-      auto p = wrapConfig(s_pZ.p);
+      auto p = s_pZ.p;
       auto start = [&]() {
         switch(l) {
           case Bound::Open:   return grid_floor(t + p, s_pZ);
           case Bound::Closed: return grid_ceil(t, s_pZ);
         };
       }();
-      return iter::nat_iter<Numeral>()
+      return iter::nat_iter(numeral(0))
         | iter::take_while([r,p,k](auto n) -> bool { 
             switch(r) {
               case Bound::Open: return (*n) * p < k; 
@@ -509,12 +755,12 @@ namespace viras {
           .self = self,
           .x = x,
           .lim = self,
-          .sslp = _config.numeral(y == x ? 1 : 0),
-          .oslp = _config.numeral(y == x ? 1 : 0),
-          .per = _config.numeral(0),
-          .deltaY = _config.numeral(0),
+          .sslp = numeral(y == x ? 1 : 0),
+          .oslp = numeral(y == x ? 1 : 0),
+          .per = numeral(0),
+          .deltaY = numeral(0),
           .distYminus = y == x ? term(0) 
-                               : y,
+                               : term(y),
           .breaks = std::vector<Break>(),
         }; }, 
 
@@ -522,11 +768,11 @@ namespace viras {
           .self = self,
           .x = x,
           .lim = self,
-          .sslp = _config.numeral(0),
-          .oslp = _config.numeral(0),
-          .per = _config.numeral(0),
-          .deltaY = _config.numeral(0),
-          .distYminus = _config.term(_config.numeral(1)),
+          .sslp = numeral(0),
+          .oslp = numeral(0),
+          .per = numeral(0),
+          .deltaY = numeral(0),
+          .distYminus = term(numeral(1)),
           .breaks = std::vector<Break>(),
         }; }, 
         /* k * t */ [&](auto k, auto t) { 
@@ -534,13 +780,13 @@ namespace viras {
           return LiraTerm {
             .self = self,
             .x = x,
-            .lim = (k * rec.lim).inner,
-            .sslp = (k * rec.sslp).inner,
-            .oslp = (k * rec.sslp).inner,
+            .lim = k * rec.lim,
+            .sslp = k * rec.sslp,
+            .oslp = k * rec.sslp,
             .per = rec.per,
             .deltaY = abs(k) * rec.deltaY,
-            .distYminus = k >= 0 ? (k * rec.distYminus).inner
-                                 : (k * rec.distYplus()).inner,
+            .distYminus = k >= 0 ? k * rec.distYminus
+                                 : k * rec.distYplus(),
             .breaks = std::move(rec.breaks),
           }; 
         }, 
@@ -553,14 +799,14 @@ namespace viras {
           return LiraTerm {
             .self = self,
             .x = x,
-            .lim = rec_l.lim + wrapConfig(rec_r.lim),
-            .sslp = rec_l.sslp + wrapConfig(rec_r.sslp),
-            .oslp = rec_l.sslp + wrapConfig(rec_r.sslp),
+            .lim = rec_l.lim + rec_r.lim,
+            .sslp = rec_l.sslp + rec_r.sslp,
+            .oslp = rec_l.sslp + rec_r.sslp,
             .per = rec_l.per == 0 ? rec_r.per
                  : rec_r.per == 0 ? rec_l.per
-                 : _config.lcm(rec_l.per, rec_r.per),
+                 : lcm(rec_l.per, rec_r.per),
             .deltaY = rec_l.deltaY + rec_r.deltaY,
-            .distYminus = wrapConfig(rec_l.distYminus) + rec_r.distYminus,
+            .distYminus = rec_l.distYminus + rec_r.distYminus,
             .breaks = std::move(breaks),
           }; 
         }, 
@@ -577,7 +823,7 @@ namespace viras {
             .oslp = rec.oslp,
             .per = rec.per == 0 && rec.oslp == 0 ? numeral(0)
                  : rec.per == 0                  ? 1 / abs(rec.oslp)
-                 : _config.num(rec.per) * _config.den(rec.oslp),
+                 : num(rec.per) * den(rec.oslp),
             .deltaY = rec.deltaY + 1,
             .distYminus = rec.distYminus - 1,
             .breaks = std::vector<Break>(),
@@ -585,7 +831,7 @@ namespace viras {
           if (rec.sslp == 0) {
             out.breaks = std::move(rec.breaks);
           } else if (rec.breaks.empty()) {
-            out.breaks.push_back(Break {rec.zero(term(0)).inner, out.per});
+            out.breaks.push_back(Break {rec.zero(term(0)), out.per});
           } else {
             auto p_min = *(iter::array_ptr(out.breaks) 
               | iter::map([](auto b) -> Numeral { return b->p; })
@@ -628,8 +874,8 @@ namespace viras {
 
     auto elim_set(Var const& x, Literal const& lit)
     {
-      auto t = analyse(_config.term_of_literal(lit), x);
-      auto symbol = _config.symbol_of_literal(lit);
+      auto t = analyse(lit.term(), x);
+      auto symbol = lit.symbol();
       auto isIneq = [](auto symbol) { return (symbol == PredSymbol::Geq || symbol == PredSymbol::Gt); };
       using VT = VirtualTerm;
 
@@ -657,14 +903,14 @@ namespace viras {
                        auto ezero = [&]() { return 
                           iter::if_then_(t.periodic(), 
                                          iter::array_ptr(t.breaks) 
-                                           | iter::map([&](auto* b) { return VT::periodic(t.zero(wrapConfig(b->t)), b->p); }))
+                                           | iter::map([&](auto* b) { return VT::periodic(t.zero(b->t), b->p); }))
 
                                 else_if_(t.oslp == t.sslp,
                                          iter::array_ptr(t.breaks) 
-                                           | iter::map([&](auto* b) { return VT::plain(t.zero(wrapConfig(b->t))); }))
+                                           | iter::map([&](auto* b) { return VT::plain(t.zero(b->t)); }))
 
                                 else____(iter::array_ptr(t.breaks) 
-                                           | iter::flat_map([&](auto* b) { return intersectGrid(Break { .t=t.zero(wrapConfig(b->t)), .p=(1 - t.oslp / t.sslp) },
+                                           | iter::flat_map([&](auto* b) { return intersectGrid(Break { .t=t.zero(b->t), .p=(1 - t.oslp / t.sslp) },
                                                                                                 Bound::Open, t.distXminus(), t.deltaX(), Bound::Open); })
                                            | iter::map([&](auto t) { return VT::plain(t); }))
                                          
@@ -694,7 +940,7 @@ namespace viras {
     auto elim_set(Var const& x, Literals const& lits)
     {
       return iter::array(lits) 
-        | iter::flat_map([&](auto* lit) { return elim_set(x, lit); });
+        | iter::flat_map([&](auto lit) { return elim_set(x, lit); });
     }
 
     class VsubsIter {
@@ -704,12 +950,16 @@ namespace viras {
 
     VsubsIter vsubs(Literals const& lits, Var const& x, VirtualTerm& term);
 
+
     auto quantifier_elimination(Var const& x, Literals const& lits)
     {
-      Term* t = 0;
-      analyse(*t, x);
       return elim_set(x, lits)
         | iter::flat_map([&](auto t) { return vsubs(lits, x, t); });
+    }
+
+    auto quantifier_elimination(typename Config::Var const& x, typename Config::Literals const& lits)
+    {
+      return quantifier_elimination(CVar<Config> { &_config, x }, CLiterals<Config> { &_config, lits });
     }
   };
 

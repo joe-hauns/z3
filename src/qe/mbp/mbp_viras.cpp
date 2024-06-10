@@ -30,6 +30,11 @@ Author:
 
 using namespace viras;
 
+template<class Config>
+struct SugaryConfig {
+  Config config;
+};
+
 struct z3_viras_config {
   ast_manager& m;
   arith_util m_arith;
@@ -46,20 +51,21 @@ struct z3_viras_config {
 
   Numeral mul(Numeral l, Numeral r);
   Numeral add(Numeral l, Numeral r);
-  Numeral div(Numeral l, Numeral r);
+  Numeral floor(Numeral t);
 
   Term mul(Numeral l, Term r);
-  Term div(Term l, Numeral r);
   Term add(Term l, Term r);
-  Term add(Term l, Numeral r);
-  Term add(Numeral l, Term r);
   Term floor(Term t);
-  Term minus(Term t);
 
   Term term(Numeral n);
-  Term one() { return term(numeral(1)); }
+  Term term(Var v);
+  Numeral inverse(Numeral n);
+
+  bool less(Numeral, Numeral);
+  bool leq(Numeral, Numeral);
 
   Term subs(Term term, Var var, Term by);
+
   Term term_of_literal(Literal l);
   PredSymbol symbol_of_literal(Literal l);
 
@@ -68,6 +74,9 @@ struct z3_viras_config {
 
   /* the denomiantor of some rational */
   Numeral den(Numeral l);
+
+  size_t literals_size(Literals const& l) { return l.size(); }
+  Literal literals_get(Literals const& l, size_t idx) { return l[idx]; }
 
   template<class IfVar, class IfOne, class IfMul, class IfAdd, class IfFloor>
   auto matchTerm(Term t, 
@@ -89,7 +98,7 @@ struct z3_viras_config {
       if (q.is_one()) {
         return if_one();
       } else {
-        return if_mul(q, this->one());
+        return if_mul(q, term(numeral(1)));
       }
     } else if (m_arith.is_add(t, e1, e2)) {
       return if_add(e1, e2);
@@ -140,7 +149,7 @@ namespace mbp {
           auto var = vars[i].get();
           for (auto conj : cur_disj) {
             viras.quantifier_elimination(var, conj)
-              | iter::foreach([&](auto x) { new_disj.push_back(x); });
+              | iter::foreach([&](auto x) { new_disj.push_back(x.inner); });
           }
           cur_disj.shrink(0);
           std::swap(cur_disj, new_disj);
