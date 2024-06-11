@@ -1022,13 +1022,6 @@ namespace viras {
     auto elim_set(Var const& x, std::vector<LiraLiteral> lits)
     { return iter::array(lits) | iter::flat_map([&](auto lit) { return elim_set(x, lit); }); }
 
-
-
-    class LiteralIter {
-    public:
-      std::optional<Literal> next();
-    };
-
     Literal literal(Term t, PredSymbol s) 
     { return CLiteral { &_config, _config.create_literal(t.inner, s), }; }
 
