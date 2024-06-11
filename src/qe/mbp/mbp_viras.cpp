@@ -50,7 +50,8 @@ struct z3_viras_config {
   using Numeral  = rational;
 
   Numeral numeral(int i) { return rational(i); }
-  Numeral lcm(Numeral l, Numeral r);
+  Numeral lcm(Numeral l, Numeral r) { return rational::lcm(l, r); }
+  Numeral gcd(Numeral l, Numeral r) { return rational::gcd(l, r); }
 
   Numeral mul(Numeral l, Numeral r) { return l * r; }
   Numeral add(Numeral l, Numeral r) { return l + r; }
@@ -101,6 +102,20 @@ struct z3_viras_config {
 
   Term term_of_literal(Literal l)
   { return __normalize_lit(l).second; }
+
+
+  Literal create_literal(bool b) { return m.mk_bool_val(b); }
+
+  Literal create_literal(Term t, PredSymbol s)
+  { 
+    auto zero = term(numeral(0));
+    switch (s) {
+    case PredSymbol::Gt:  return m_arith.mk_gt(t, zero);
+    case PredSymbol::Geq: return m_arith.mk_ge(t, zero);
+    case PredSymbol::Neq: return m_arith.mk_eq(t, zero);
+    case PredSymbol::Eq:  return m.mk_not(m_arith.mk_eq(t, zero));
+    }
+  }
 
   /* the numerator of some rational */
   Numeral num(Numeral l) { return numerator(l); }

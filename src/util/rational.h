@@ -456,18 +456,29 @@ public:
         return m().divides(a.to_mpq(), b.to_mpq());
     }
 
-    friend inline rational gcd(rational const & r1, rational const & r2);
+    static rational gcd(rational const & r1, rational const & r2);
+    friend inline rational gcd(rational const & r1, rational const & r2) {
+      return rational::gcd(r1, r2);
+    }
 
     //
     // extended Euclid:
     // r1*a + r2*b = gcd
     //
-    friend inline rational gcd(rational const & r1, rational const & r2, rational & a, rational & b);
+    static inline rational gcd(rational const & r1, rational const & r2, rational & a, rational & b);
+    friend inline rational gcd(rational const & r1, rational const & r2, rational & a, rational & b) {
+      return rational::gcd(r1,r2,a,b);
+    }
 
-    friend inline rational lcm(rational const & r1, rational const & r2) {
+
+    static rational lcm(rational const & r1, rational const & r2) {
         rational result;
         m().lcm(r1.m_val, r2.m_val, result.m_val);
         return result;
+    }
+
+    friend inline rational lcm(rational const & r1, rational const & r2) {
+      return rational::lcm(r1, r2);
     }
 
     friend inline rational bitwise_or(rational const & r1, rational const & r2) {
@@ -691,13 +702,13 @@ inline rational abs(rational const & r) {
   return result;
 }
 
-inline rational gcd(rational const & r1, rational const & r2) {
+inline rational rational::gcd(rational const & r1, rational const & r2) {
   rational result;
   rational::m().gcd(r1.m_val, r2.m_val, result.m_val);
   return result;
 }
 
-inline rational gcd(rational const & r1, rational const & r2, rational & a, rational & b) {
+inline rational rational::gcd(rational const & r1, rational const & r2, rational & a, rational & b) {
   rational result;
   rational::m().gcd(r1.m_val, r2.m_val, a.m_val, b.m_val, result.m_val);
   return result;

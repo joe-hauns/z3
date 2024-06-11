@@ -5,6 +5,9 @@
 
 namespace viras {
 
+  template<class T>
+  T dummyVal();
+
   namespace iter {
 
     template<class T> struct opt_value_type;
@@ -40,6 +43,55 @@ namespace viras {
       });
     };
 
+
+    constexpr auto fold = [](auto f) {
+      return iterOperator([f = std::move(f)](auto iter) -> std::optional<decltype(f(*iter.next(), *iter.next()))> {
+          auto fst = iter.next();
+          if (fst) {
+            auto res = *fst;
+            for (auto x = iter.next(); x; x = iter.next()) {
+              res = f(res, *x);
+            }
+            return res;
+          } else {
+            return {};
+          }
+      });
+    };
+
+
+    constexpr auto all = [](auto f) {
+      return iterOperator([f = std::move(f)](auto iter) {
+          for (auto x = iter.next(); x; x = iter.next()) {
+            if (!f(*x))
+              return false;
+          }
+          return true;
+      });
+    };
+
+
+    constexpr auto any = [](auto f) {
+      return iterOperator([f = std::move(f)](auto iter) {
+          for (auto x = iter.next(); x; x = iter.next()) {
+            if (f(*x))
+              return true;
+          }
+          return false;
+      });
+    };
+
+    constexpr auto find = [](auto f) {
+      return iterOperator([f = std::move(f)](auto iter) -> std::optional<value_type<decltype(iter)>> {
+          using res = std::optional<value_type<decltype(iter)>>;
+          for (auto x = iter.next(); x; x = iter.next()) {
+            if (f(*x))
+              return res(*x);
+          }
+          return res();
+      });
+    };
+
     template<class I, class F>
     struct MapIter {
       I i;
@@ -72,7 +124,7 @@ namespace viras {
 
     constexpr auto filter = [](auto f) {
       return iterOperator([f = std::move(f)](auto i) {
-        return FilterIter<decltype(i), decltype(f)>(i,f);
+        return FilterIter<decltype(i), decltype(f)>{std::move(i),std::move(f)};
       });
     };
 
@@ -515,13 +567,20 @@ DEF_BMINUS(CTerm   , CTerm   )
   { return x < 0 ? -x : x; }
 
   template<class Config>
-  CNumeral<Config> num(CNumeral<Config> x);
+  CNumeral<Config> num(CNumeral<Config> x)
+  { return CNumeral<Config> { x.config, x.config->num(x.inner) }; }
 
   template<class Config>
-  CNumeral<Config> den(CNumeral<Config> x);
+  CNumeral<Config> den(CNumeral<Config> x) 
+  { return CNumeral<Config> { x.config, x.config->den(x.inner) }; }
 
   template<class Config>
-  CNumeral<Config> lcm(CNumeral<Config> l, CNumeral<Config> r);
+  CNumeral<Config> lcm(CNumeral<Config> l, CNumeral<Config> r)
+  { 
+    auto cn = [&](auto x) { return CNumeral<Config> { l.config, x }; };
+    return cn(l.config->lcm(num(l).inner, num(r).inner)) 
+         / cn(l.config->gcd(den(l).inner, den(r).inner));  
+  }
   // { return x < 0 ? -x : x; }
 
    // floor
@@ -606,12 +665,27 @@ DEF_BMINUS(CTerm   , CTerm   )
       Term distYminus;
       Term distYplus() { return distYminus + deltaY; }
       std::vector<Break> breaks;
-      Term distXplus();
-      Term distXminus();
-      Numeral deltaX();
+      Term distXminus() { 
+        auto distY = oslp > 0 ? distYplus() : distYminus;
+        return -(1 / oslp) * distY;
+      }
+      Term distXplus() { return distXminus() + deltaX(); }
+      Numeral deltaX() { return abs(1 / oslp) * deltaY; }
 
-      bool lim_pos_inf();
-      bool lim_neg_inf();
+      bool lim_inf(PredSymbol symbol, bool positive) const
+      { 
+        SASSERT(oslp != 0);
+        switch (symbol) {
+        case PredSymbol::Gt:
+        case PredSymbol::Geq: return positive ? oslp > 0 
+                                              : oslp < 0;
+        case PredSymbol::Neq: return true;
+        case PredSymbol::Eq: return false;
+        }
+      }
+
+      bool lim_pos_inf(PredSymbol symbol) const { return lim_inf(symbol, /* pos */ true); }
+      bool lim_neg_inf(PredSymbol symbol) const { return lim_inf(symbol, /* pos */ false); }
 
       Term lim_at(Term x0) const { return subs(lim, x, x0); }
       Term dseg(Term x0) const { return -(sslp * x0) + lim_at(x0); }
@@ -854,6 +928,16 @@ DEF_BMINUS(CTerm   , CTerm   )
       return out; 
     }
 
+    friend VirtualTerm operator+(Term const& t, Infty const& infty) 
+    { return VirtualTerm(t) + infty; }
+
+    friend VirtualTerm operator+(VirtualTerm const& t, Infty const& infty) 
+    { 
+      VirtualTerm out = t;
+      out.infty = std::optional<Infty>(infty);
+      return out; 
+    }
+
 
 #define if_then_(x, y) if_then([&]() { return x; }, [&]() { return y; }) 
 #define else_if_(x, y) .else_if([&]() { return x; }, [&]() { return y; })
@@ -912,12 +996,12 @@ DEF_BMINUS(CTerm   , CTerm   )
                                  else_is_(t.sslp != 0 && symbol == PredSymbol::Eq,  ezero())
                        ; };
                        auto ebound_plus  = [&]() { return 
-                           iter::if_then_(t.lim_pos_inf(), iter::vals<VT>(t.distXplus(), t.distXplus() + epsilon))
-                                 else____(                 iter::vals<VT>(t.distXplus()                         )); };
+                           iter::if_then_(t.lim_pos_inf(symbol), iter::vals<VT>(t.distXplus(), t.distXplus() + epsilon))
+                                 else____(                       iter::vals<VT>(t.distXplus()                         )); };
 
                        auto ebound_minus = [&]() { return 
-                           iter::if_then_(t.lim_neg_inf(), iter::vals<VT>(t.distXplus(), -infty))
-                                 else____(                 iter::vals<VT>(t.distXplus()        )); };
+                           iter::if_then_(t.lim_neg_inf(symbol), iter::vals<VT>(t.distXplus(), -infty))
+                                 else____(                       iter::vals<VT>(t.distXplus()        )); };
 
                        return iter::if_then_(t.periodic(), iter::concat(ebreak(), eseg()))
                                     else____(              iter::concat(ebreak(), eseg(), ebound_plus(), ebound_minus()));
@@ -938,21 +1022,23 @@ DEF_BMINUS(CTerm   , CTerm   )
       std::optional<Literal> next();
     };
 
-    Literal createLiteral(Term t, PredSymbol s);
-    Literal lim_val(LiraTerm t, PredSymbol s);
-    Literal bot();
-    Literal top();
+    Literal literal(Term t, PredSymbol s) 
+    { return CLiteral<Config> { &_config, _config.create_literal(t.inner, s), }; }
+
+    Literal literal(bool b) { return CLiteral<Config> { &_config, _config.create_literal(b), }; }
+
+    // TODO nicer?
+    auto vt_term(VirtualTerm vt) { return vt.term ? *vt.term : term(0); };
 
     Literal vsubs_aperiodic0(LiraTerm const& s, PredSymbol symbol, Var const& x, VirtualTerm vt) {
       SASSERT(!vt.period);
-      auto vt_term = [&]() { return vt.term ? *vt.term : term(0); };
       if (vt.infty) {
         /* case 3 */
         if (s.periodic()) {
           vt.infty = {};
           return vsubs_aperiodic0(s, symbol, x, vt);
         } else {
-          return lim_val(s, symbol);
+          return literal(s.lim_inf(symbol, vt.infty->positive));
         }
       } else if (vt.epsilon) {
         switch(symbol) {
@@ -960,15 +1046,15 @@ DEF_BMINUS(CTerm   , CTerm   )
           case PredSymbol::Neq: {
             /* case 4 */
             if (s.sslp != 0) {
-              return symbol == PredSymbol::Eq ? bot() : top();
+              return symbol == PredSymbol::Eq ? literal(false) : literal(true);
             } else {
-              return createLiteral(s.lim_at(vt_term()), symbol);
+              return literal(s.lim_at(vt_term(vt)), symbol);
             }
           }
           case PredSymbol::Geq:
           case PredSymbol::Gt: {
             /* case 5 */
-            return createLiteral(s.lim_at(vt_term()), 
+            return literal(s.lim_at(vt_term(vt)), 
                   s.sslp > 0 ? PredSymbol::Geq
                 : s.sslp < 0 ? PredSymbol::Gt
                 :              symbol);
@@ -976,12 +1062,12 @@ DEF_BMINUS(CTerm   , CTerm   )
         }
       } else {
         SASSERT(!vt.epsilon && !vt.infty && !vt.period);
-        return createLiteral(subs(s.self, x, vt_term()), symbol);
+        return literal(subs(s.self, x, vt_term(vt)), symbol);
       }
     }
 
 
-    auto vsubs_aperiodic1(Literals const& lits, Var const& x, VirtualTerm& term) {
+    auto vsubs_aperiodic1(Literals const& lits, Var const& x, VirtualTerm const& term) {
       SASSERT(!term.period);
           /* case 2 */
       return iter::array(lits) 
@@ -992,11 +1078,51 @@ DEF_BMINUS(CTerm   , CTerm   )
         });
     }
 
-    auto vsubs(Literals const& lits, Var const& x, VirtualTerm& term) {
+    auto vsubs(Literals const& lits, Var const& x, VirtualTerm const& term) {
+      SASSERT(!term.infty || !term.period);
       return iter::if_then_(term.period, [&](){
-          /* case 1 */
-                              auto fin = iter::dummy<VirtualTerm>();
-                              return fin | iter::map([&](auto t) { return vsubs_aperiodic1(lits, x, t); });
+                              /* case 1 */
+                              auto all_lits = [&](auto p) { return iter::array(lits) | iter::all(p); };
+                              Numeral lambda = *(iter::array(lits)
+                                             | iter::filter([&](auto L) {
+                                                auto La = analyse(L->term(), x);
+                                                return La.periodic();
+                                             })
+                                             | iter::map([&](auto L) {
+                                                auto La = analyse(L.term(), x);
+                                                return La.per;
+                                             })
+                                             | iter::fold([](auto l, auto r) { return lcm(l, r); }));
+                              // auto fin = ;
+                              auto fin = 
+                                iter::if_then_(all_lits([&](auto l) { return analyse(l.term(), x).lim_pos_inf(l.symbol()); }), 
+                                               intersectGrid(Break { vt_term(term), *term.period }, Bound::Closed, vt_term(term), lambda, Bound::Open)
+                                                | iter::map([](auto s) { return s + infty; }))
+                                      else_if_(all_lits([&](auto l) { return analyse(l.term(), x).lim_neg_inf(l.symbol()); }), 
+                                               intersectGrid(Break { vt_term(term), *term.period }, Bound::Closed, vt_term(term), lambda, Bound::Open)
+                                                | iter::map([](auto s) { return s + -infty; }))
+                                      else_if_(iter::array(lits) | iter::any([](auto l) { return l.symbol() == PredSymbol::Eq; }), 
+                                          [&](){
+                                                auto L = *(iter::array(lits) | iter::find([](auto l) { return l.symbol() == PredSymbol::Eq; }));
+                                                auto La = analyse(L.term(), x);
+                                                return intersectGrid(Break { vt_term(term), *term.period }, Bound::Closed, La.distXminus(), La.deltaX(), Bound::Closed)
+                                                  | iter::map([](auto x) { return VirtualTerm(x); });
+                                          }())
+                                      else____(
+                                            iter::array(lits) 
+                                          | iter::filter([&](auto L) {
+                                                auto La = analyse(L->term(), x);
+                                                return !La.periodic() && La.lim_neg_inf(L->symbol()) == false;
+                                            })
+                                          | iter::flat_map([&](auto L) {
+                                                auto La = analyse(L.term(), x);
+                                                return intersectGrid(Break { vt_term(term), *term.period }, Bound::Closed, La.distXminus(), La.deltaX() + lambda, Bound::Closed);
+                                            })
+                                          | iter::map([](auto t) { return VirtualTerm(t); })
+
+                                          );
+
+                              return std::move(fin) | iter::map([&](auto t) { return vsubs_aperiodic1(lits, x, t); });
                             }())
                    else____(iter::vals(vsubs_aperiodic1(lits, x, term)));
     }
