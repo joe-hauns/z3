@@ -11,41 +11,46 @@ namespace viras {
   namespace iter {
 
     template<class T> struct opt_value_type;
-    // template<class T> struct opt_value_type<std::optional<T>> { using type = T; };
     template<template<class> class Tmplt, class T> struct opt_value_type<Tmplt<T>> { using type = T; };
 
     template<class I>
-    using value_type = typename opt_value_type<decltype(((I*)0)->next())>::type;
+    // using value_type = typename opt_value_type<decltype(((I*)0)->next())>::type;
+    using value_type = typename decltype(((I*)0)->next())::value_type;
 
 
     template<class Op>
-    struct IterOperator {
+    struct IterCombinator {
       Op self;
       template<class I>
-      friend auto operator|(I iter, IterOperator self) -> decltype(auto) 
+      friend auto operator|(I iter, IterCombinator self) -> decltype(auto) 
       { return (self.self)(iter); }
 
       template<class Op2>
-      auto compose(IterOperator<Op2> other) {
-        return iterOperator([self = std::move(this->self), other = std::move(other)](auto iter){ return (other.self)((self)(iter)); });
+      auto compose(IterCombinator<Op2> other) {
+        return iterCombinator([self = std::move(this->self), other = std::move(other)](auto iter){ return (other.self)((self)(std::move(iter))); });
       }
     };
 
     template<class O>
-    constexpr IterOperator<O> iterOperator(O o) 
-    { return IterOperator<O>{ std::move(o) }; }
+    constexpr IterCombinator<O> iterCombinator(O o) 
+    { return IterCombinator<O>{ std::move(o) }; }
 
     constexpr auto foreach = [](auto f) {
-      return iterOperator([f = std::move(f)](auto iter) {
-        for (auto x = iter.next(); x; x = iter.next()) {
-          f(*x);
+      return iterCombinator([f = std::move(f)](auto iter) {
+        while (true) {
+          auto x = iter.next();
+          if (x) {
+            f(*x);
+          } else {
+            break;
+          }
         }
       });
     };
 
 
     constexpr auto fold = [](auto f) {
-      return iterOperator([f = std::move(f)](auto iter) -> std::optional<decltype(f(*iter.next(), *iter.next()))> {
+      return iterCombinator([f = std::move(f)](auto iter) -> std::optional<decltype(f(*iter.next(), *iter.next()))> {
           auto fst = iter.next();
           if (fst) {
             auto res = *fst;
@@ -61,7 +66,7 @@ namespace viras {
 
 
     constexpr auto all = [](auto f) {
-      return iterOperator([f = std::move(f)](auto iter) {
+      return iterCombinator([f = std::move(f)](auto iter) {
           for (auto x = iter.next(); x; x = iter.next()) {
             if (!f(*x))
               return false;
@@ -72,7 +77,7 @@ namespace viras {
 
 
     constexpr auto any = [](auto f) {
-      return iterOperator([f = std::move(f)](auto iter) {
+      return iterCombinator([f = std::move(f)](auto iter) {
           for (auto x = iter.next(); x; x = iter.next()) {
             if (f(*x))
               return true;
@@ -82,7 +87,7 @@ namespace viras {
     };
 
     constexpr auto find = [](auto f) {
-      return iterOperator([f = std::move(f)](auto iter) -> std::optional<value_type<decltype(iter)>> {
+      return iterCombinator([f = std::move(f)](auto iter) -> std::optional<value_type<decltype(iter)>> {
           using res = std::optional<value_type<decltype(iter)>>;
           for (auto x = iter.next(); x; x = iter.next()) {
             if (f(*x))
@@ -104,7 +109,7 @@ namespace viras {
     };
 
     constexpr auto map = [](auto f) {
-      return iterOperator([f = std::move(f)](auto i) {
+      return iterCombinator([f = std::move(f)](auto i) {
         return MapIter<decltype(i), decltype(f)>{i,f};
       });
     };
@@ -123,7 +128,7 @@ namespace viras {
     };
 
     constexpr auto filter = [](auto f) {
-      return iterOperator([f = std::move(f)](auto i) {
+      return iterCombinator([f = std::move(f)](auto i) {
         return FilterIter<decltype(i), decltype(f)>{std::move(i),std::move(f)};
       });
     };
@@ -149,7 +154,7 @@ namespace viras {
     };
 
     constexpr auto take_while = [](auto f) {
-      return iterOperator([f = std::move(f)](auto i) {
+      return iterCombinator([f = std::move(f)](auto i) {
         return TakeWhileIter<decltype(i), decltype(f)>{ std::move(i),std::move(f), false, };
       });
     };
@@ -162,7 +167,7 @@ namespace viras {
 
       FlattenIter(I i): outer(std::move(i)), inner(), init(false) {}
 
-      optional<value_type<value_type<I>>> next()
+      std::optional<value_type<value_type<I>>> next()
       {
         if (!init) {
           inner.~decltype(inner)();
@@ -172,7 +177,7 @@ namespace viras {
         while (inner) {
           auto next = inner->next();
           if (next) 
-            return optional(*next);
+            return next;
           else {
             inner.~decltype(inner)();
             new(&inner) decltype(inner)(outer.next());
@@ -182,11 +187,11 @@ namespace viras {
       }
     };
 
-    constexpr auto flatten = iterOperator([](auto i) {
+    constexpr auto flatten = iterCombinator([](auto i) {
       return FlattenIter<decltype(i)>(i);
     });
 
-    constexpr auto min = iterOperator([](auto iter) {
+    constexpr auto min = iterCombinator([](auto iter) {
       using out = std::optional<value_type<decltype(iter)>>;
       auto min_ = iter.next();
       if (min_) {
@@ -213,7 +218,7 @@ namespace viras {
 
       std::optional<T> next()
       {
-        if (lower < upper) return optional(lower++);
+        if (lower < upper) return std::optional(lower++);
         else return {};
       }
     };
@@ -400,6 +405,8 @@ namespace viras {
   } // namespace iter
 
   enum class PredSymbol { Gt, Geq, Neq, Eq, };
+
+  // START OF SYNTAX SUGAR STUFF
 
   template<class Config, class T>
   struct WithConfig { 
@@ -624,6 +631,8 @@ DEF_BMINUS(CTerm   , CTerm   )
   template<class Config>                                                                  \
   bool operator OP (int lhs, CNumeral<Config> rhs)                                        \
   { return CNumeral <Config> { rhs.config, rhs.config->numeral(lhs), } OP rhs; }          \
+  
+  // END OF SYNTAX SUGAR STUFF
 
   template<class Config>
   class Viras {

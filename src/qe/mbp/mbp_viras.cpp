@@ -168,20 +168,6 @@ namespace mbp {
       // we can only project all variables at once
       // otherwise we'd might have to introduce a disjunction in the result `lits`
       return false;
-      // ref_vector<expr, ast_manager> result(m);
-      // auto viras = Viras<z3_viras_config>();
-      // auto elim_set = viras.elim_set(var, lits);
-      // while (elim_set.has_next()) {
-      //   auto vterm = elim_set.next();
-      //   auto disjuncts = viras.vsubs(lits, var, vterm);
-      //   while (disjuncts.has_next()) {
-      //     result.push_back(m.mk_and(disjuncts.next()));
-      //   }
-      // }
-      // lits.shrink(0);
-      // SASSERT(lits.size() == 0);
-      // lits.push_back(m.mk_or(result));
-      // return true;
     }
 
     bool viras_project_plugin::operator()(model& model, app_ref_vector& vars, expr_ref_vector& lits) {
