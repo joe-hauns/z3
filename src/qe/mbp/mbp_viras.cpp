@@ -181,7 +181,8 @@ namespace mbp {
         // using the property `exists x. (A \/ B) <-> exists x.A \/ exists x.B`
         for (int i = 0; i < vars.size(); i++) {
           auto var = vars[i].get();
-          for (auto conj : cur_disj) {
+          for (auto conj_ : cur_disj) {
+            auto conj = viras.analyse(conj_, var);
             viras.quantifier_elimination(var, conj)
               | iter::foreach([&](auto lits) { 
                   expr_ref_vector new_conj(m);

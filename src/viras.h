@@ -191,21 +191,29 @@ namespace viras {
       return FlattenIter<decltype(i)>(i);
     });
 
-    constexpr auto min = iterCombinator([](auto iter) {
-      using out = std::optional<value_type<decltype(iter)>>;
-      auto min_ = iter.next();
-      if (min_) {
-        auto min = std::move(*min_);
-        for (auto x = iter.next(); x; x = iter.next()) {
-          if (x < min) {
-            min = std::move(*x);
+    constexpr auto min_by = [](auto less) {
+      return iterCombinator([less = std::move(less)](auto iter) {
+        using out = std::optional<value_type<decltype(iter)>>;
+        auto min_ = iter.next();
+        if (min_) {
+          auto min = std::move(*min_);
+          for (auto x = iter.next(); x; x = iter.next()) {
+            if (less(*x, min)) {
+              min = std::move(*x);
+            }
           }
+          return out(std::move(min));
+        } else {
+          return out();
         }
-        return out(std::move(min));
-      } else {
-        return out();
-      }
-    });
+      });
+    };
+
+    constexpr auto min = min_by([](auto l, auto r) { return l < r; });
+
+    constexpr auto min_by_key = [](auto f) {
+      return min_by([f = std::move(f)](auto l, auto r) { return f(l) < f(r); });
+    };
 
     constexpr auto flat_map = [](auto f) {
       return map(f).compose(flatten);
@@ -662,6 +670,23 @@ namespace viras {
     };
 
 
+    struct Infty {
+      bool positive;
+      Infty operator-() const 
+      { return Infty { .positive = !positive, }; }
+
+      friend std::ostream& operator<<(std::ostream& out, Infty const& self)
+      { 
+        if (self.positive) {
+          return out << "∞";
+        } else {
+          return out << "-∞";
+        }
+      }
+    };
+    static constexpr Infty infty { .positive = true, };
+
+
     struct LiraLiteral {
       LiraTerm term;
       PredSymbol symbol;
@@ -681,6 +706,9 @@ namespace viras {
         case PredSymbol::Eq: return false;
         }
       }
+
+      bool lim(Infty i) const
+      { return lim_inf(i.positive); }
 
 
     };
@@ -842,36 +870,21 @@ namespace viras {
     LiraLiteral analyse(Literal self, Var x) 
     { return LiraLiteral { analyse(self.term(), x), self.symbol() }; }
 
+    std::vector<LiraLiteral> analyse(Literals const& self, Var x) 
+    { 
+      std::vector<LiraLiteral> out;
+      iter::array(self) | iter::foreach([&](auto lit) { return out.push_back(analyse(lit, x)); });
+      return out; 
+    }
 
 
-
-
-    enum class Infinity {
-      Plus,
-      Minus,
-      Zero,
-    };
-
-    struct Infty {
-      bool positive;
-      Infty operator-() const 
-      { return Infty { .positive = !positive, }; }
-
-      friend std::ostream& operator<<(std::ostream& out, Infty const& self)
-      { 
-        if (self.positive) {
-          return out << "∞";
-        } else {
-          return out << "-∞";
-        }
-      }
-    };
+    std::vector<LiraLiteral> analyse(typename Config::Literals const& self, typename Config::Var x) 
+    { return analyse(CLiterals { &_config, self }, CVar { &_config, x }); }
 
     struct Epsilon {
       friend std::ostream& operator<<(std::ostream& out, Epsilon const& self)
       { return out << "ε"; }
     };
-    static constexpr Infty infty { .positive = true, };
     static constexpr Epsilon epsilon;
 
     struct VirtualTerm {
@@ -941,9 +954,8 @@ namespace viras {
 #define else____(x) .else_([&]() { return x; })
 #define else_is_(x,y) .else_([&]() { SASSERT(x); return y; })
 
-    auto elim_set(Var const& x, Literal const& l)
+    auto elim_set(Var const& x, LiraLiteral const& lit)
     {
-      auto lit = analyse(l, x);
       auto t = lit.term;
       auto symbol = lit.symbol;
       auto isIneq = [](auto symbol) { return (symbol == PredSymbol::Geq || symbol == PredSymbol::Gt); };
@@ -1007,11 +1019,8 @@ namespace viras {
 
     }
 
-    auto elim_set(Var const& x, Literals const& lits)
-    {
-      return iter::array(lits) 
-        | iter::flat_map([&](auto lit) { return elim_set(x, lit); });
-    }
+    auto elim_set(Var const& x, std::vector<LiraLiteral> lits)
+    { return iter::array(lits) | iter::flat_map([&](auto lit) { return elim_set(x, lit); }); }
 
 
 
@@ -1074,58 +1083,57 @@ namespace viras {
         | iter::map([&](auto lit) { return vsubs_aperiodic0(lit, x, term); });
     }
 
-    auto vsubs(Literals const& ls, Var const& x, VirtualTerm const& term) {
+    auto vsubs(std::vector<LiraLiteral> const& lits, Var const& x, VirtualTerm const& term) {
       SASSERT(!term.infty || !term.period);
-      std::vector<LiraLiteral> lits;
-      lits.reserve(ls.size());
-      iter::array(ls) | iter::foreach([&](auto l) { return lits.push_back(analyse(l, x)); });
       return iter::if_then_(term.period, ([&](){
                               /* case 1 */
-                              auto all_lits = [&](auto p) { return iter::array(lits) | iter::all(p); };
                               Numeral lambda = *(iter::array(lits)
                                              | iter::filter([&](auto L) { return L->periodic(); })
                                              | iter::map([&](auto L) { return L.term.per; })
                                              | iter::fold([](auto l, auto r) { return lcm(l, r); }));
-                              auto grid = Break { vt_term(term), *term.period };
-                              auto fin = 
-                                iter::if_then_(all_lits([&](auto l) { return l.lim_pos_inf(); }), 
-                                               intersectGrid(grid, Bound::Closed, vt_term(term), lambda, Bound::Open)
-                                                | iter::map([](auto s) { return s + infty; }))
-                                      else_if_(all_lits([&](auto l) { return l.lim_neg_inf(); }), 
-                                               intersectGrid(grid, Bound::Closed, vt_term(term), lambda, Bound::Open)
-                                                | iter::map([](auto s) { return s + -infty; }))
-                                      else_if_(iter::array(lits) | iter::any([](auto l) { return l.symbol == PredSymbol::Eq; }), 
-                                          [&](){
-                                                // TODO which one of these to find? The one with the smallest deltaX!!
-                                                auto L = *(iter::array(lits) | iter::find([](auto l) { return l.symbol == PredSymbol::Eq; }));
-                                                return intersectGrid(grid, Bound::Closed, L.term.distXminus(), L.term.deltaX(), Bound::Closed)
+                              // auto grid = Break { vt_term(term), *term.period };
+                              auto iGrid = [this, term](auto... args) { return intersectGrid(Break { vt_term(term), *term.period, }, args...)
                                                   | iter::map([](auto x) { return VirtualTerm(x); });
-                                          }())
+                              ; };
+                              auto all_lim_top = [&](Infty i) { return iter::array(lits) | iter::all([&](auto l) { return l.lim(i) == true; }); };
+                              auto one_lambda_plus = [this, iGrid, term, lambda](Infty inf) {
+                                return iGrid(Bound::Closed, vt_term(term), lambda, Bound::Open) 
+                                     | iter::map([&](auto s) { return s + inf; });
+                              };
+                              std::optional<LiraLiteral> aperiodic_equality;
+                              auto aperiodic_equality_exists = [&]() -> bool { 
+                                aperiodic_equality = iter::array(lits) 
+                                                   | iter::filter([](auto l) { return !l->periodic() && l->symbol == PredSymbol::Eq; })
+                                                   | iter::min_by_key([](auto l) { return l.term.deltaX(); });
+                                return bool(aperiodic_equality);
+                              };
+                              auto fin = 
+                                iter::if_then_(all_lim_top( infty), one_lambda_plus( infty))
+                                      else_if_(all_lim_top(-infty), one_lambda_plus(-infty))
+                                      else_if_(aperiodic_equality_exists(), 
+                                               iGrid(Bound::Closed, aperiodic_equality->term.distXminus(), aperiodic_equality->term.deltaX(), Bound::Closed))
                                       else____(
                                             iter::array(lits) 
                                           | iter::filter([&](auto L) { return !L->periodic() && L->lim_neg_inf() == false; })
                                           | iter::flat_map([&](auto L) {
-                                                return intersectGrid(Break { vt_term(term), *term.period }, Bound::Closed, L.term.distXminus(), L.term.deltaX() + lambda, Bound::Closed);
+                                                return iGrid(Bound::Closed, L.term.distXminus(), L.term.deltaX() + lambda, Bound::Closed);
                                             })
-                                          | iter::map([](auto t) { return VirtualTerm(t); })
-
                                           );
-
                               return std::move(fin) | iter::map([&](auto t) { return vsubs_aperiodic1(lits, x, t); });
                             }()))
                    else____(iter::vals(vsubs_aperiodic1(lits, x, term)));
     }
 
 
-    auto quantifier_elimination(Var const& x, Literals const& lits)
+    auto quantifier_elimination(Var const& x, std::vector<LiraLiteral> const& lits)
     {
       return elim_set(x, lits)
         | iter::flat_map([&](auto t) { return vsubs(lits, x, t); });
     }
 
-    auto quantifier_elimination(typename Config::Var const& x, typename Config::Literals const& lits)
+    auto quantifier_elimination(typename Config::Var const& x, std::vector<LiraLiteral> const& lits)
     {
-      return quantifier_elimination(CVar { &_config, x }, CLiterals { &_config, lits });
+      return quantifier_elimination(CVar { &_config, x }, lits);
     }
   };
 
