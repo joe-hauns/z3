@@ -182,7 +182,11 @@ namespace mbp {
           auto var = vars[i].get();
           for (auto conj : cur_disj) {
             viras.quantifier_elimination(var, conj)
-              | iter::foreach([&](auto x) { new_disj.push_back(x.inner); });
+              | iter::foreach([&](auto lits) { 
+                  expr_ref_vector new_conj(m);
+                  lits | iter::foreach([&](auto lit) { new_conj.push_back(lit.inner); });
+                  new_disj.push_back(std::move(new_conj)); 
+              });
           }
           cur_disj.shrink(0);
           std::swap(cur_disj, new_disj);

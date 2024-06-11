@@ -201,6 +201,16 @@ namespace viras {
     ClosureIter<F> closure(F fn)
     { return ClosureIter<F>{std::move(fn)}; }
 
+    template<class A>
+    struct DummyIter {
+      auto next() -> std::optional<A>;
+    };
+
+    template<class A>
+    constexpr auto dummy() 
+    { return DummyIter<A>{}; }
+
+
     template<class A, unsigned N>
     struct ValsIter {
       A _vals[N];
@@ -581,6 +591,10 @@ DEF_BMINUS(CTerm   , CTerm   )
     Term grid_ceil (Term t, Break s_pZ) { return t + rem(s_pZ.t - t, s_pZ.p); }
     Term grid_floor(Term t, Break s_pZ) { return t - rem(t - s_pZ.t, s_pZ.p); }
 
+    static Term subs(Term t, Var v, Term by) {
+      return Term { t.config, t.config->subs(t.inner, v.inner, by.inner), };
+    }
+
     struct LiraTerm {
       Term self;
       Var x;
@@ -599,10 +613,10 @@ DEF_BMINUS(CTerm   , CTerm   )
       bool lim_pos_inf();
       bool lim_neg_inf();
 
-      Term lim_at(Term x0) { return Term { x0.config, x0.config->subs(lim.inner, x.inner, x0.inner), }; }
-      Term dseg(Term x0) { return -(sslp * x0) + lim_at(x0); }
-      Term zero(Term x0) { return x0 - lim_at(x0) / sslp; }
-      bool periodic() { return oslp == 0; }
+      Term lim_at(Term x0) const { return subs(lim, x, x0); }
+      Term dseg(Term x0) const { return -(sslp * x0) + lim_at(x0); }
+      Term zero(Term x0) const { return x0 - lim_at(x0) / sslp; }
+      bool periodic() const { return oslp == 0; }
     };
 
     template<class IfVar, class IfOne, class IfMul, class IfAdd, class IfFloor>
@@ -789,21 +803,21 @@ DEF_BMINUS(CTerm   , CTerm   )
     static constexpr Infty infty { .positive = true, };
     static constexpr Epsilon epsilon;
 
-    class VirtualTerm {
-      std::optional<Term> _term;
-      std::optional<Epsilon> _epsilon;
-      std::optional<Numeral> _period;
-      std::optional<Infty> _infinity;
+    struct VirtualTerm {
+      std::optional<Term> term;
+      std::optional<Epsilon> epsilon;
+      std::optional<Numeral> period;
+      std::optional<Infty> infty;
     public:
       VirtualTerm(
         std::optional<Term> term,
         std::optional<Epsilon> epsilon,
         std::optional<Numeral> period,
         std::optional<Infty> infinity) 
-        : _term(std::move(term))
-        , _epsilon(std::move(epsilon))
-        , _period(std::move(period))
-        , _infinity(std::move(infinity))
+        : term(std::move(term))
+        , epsilon(std::move(epsilon))
+        , period(std::move(period))
+        , infty(std::move(infinity))
       {}
 
       VirtualTerm(Break t_pZ) : VirtualTerm(std::move(t_pZ.t), {}, std::move(t_pZ.p), {}) {}
@@ -821,10 +835,10 @@ DEF_BMINUS(CTerm   , CTerm   )
         if (fst) { out << field; fst = false; }\
         else { out << " + " << field; }\
 
-        if (self.term) { OUTPUT(*self._term) }
-        if (self.epsilon) { OUTPUT(*self._epsilon) }
-        if (self.period) { OUTPUT(*self._period << " ℤ") }
-        if (self.infinity) { OUTPUT(*self._infinity) }
+        if (self.term) { OUTPUT(*self.term) }
+        if (self.epsilon) { OUTPUT(*self.epsilon) }
+        if (self.period) { OUTPUT(*self.period << " ℤ") }
+        if (self.infinity) { OUTPUT(*self.infty) }
         if (fst) { out << "0"; fst = false; }
         return out; 
       }
@@ -836,7 +850,7 @@ DEF_BMINUS(CTerm   , CTerm   )
     friend VirtualTerm operator+(VirtualTerm const& t, Epsilon const) 
     { 
       VirtualTerm out = t;
-      out._epsilon = std::optional<Epsilon>(epsilon);
+      out.epsilon = std::optional<Epsilon>(epsilon);
       return out; 
     }
 
@@ -917,12 +931,75 @@ DEF_BMINUS(CTerm   , CTerm   )
         | iter::flat_map([&](auto lit) { return elim_set(x, lit); });
     }
 
-    class VsubsIter {
+
+
+    class LiteralIter {
     public:
-      std::optional<Literals> next();
+      std::optional<Literal> next();
     };
 
-    VsubsIter vsubs(Literals const& lits, Var const& x, VirtualTerm& term);
+    Literal createLiteral(Term t, PredSymbol s);
+    Literal lim_val(LiraTerm t, PredSymbol s);
+    Literal bot();
+    Literal top();
+
+    Literal vsubs_aperiodic0(LiraTerm const& s, PredSymbol symbol, Var const& x, VirtualTerm vt) {
+      SASSERT(!vt.period);
+      auto vt_term = [&]() { return vt.term ? *vt.term : term(0); };
+      if (vt.infty) {
+        /* case 3 */
+        if (s.periodic()) {
+          vt.infty = {};
+          return vsubs_aperiodic0(s, symbol, x, vt);
+        } else {
+          return lim_val(s, symbol);
+        }
+      } else if (vt.epsilon) {
+        switch(symbol) {
+          case PredSymbol::Eq:
+          case PredSymbol::Neq: {
+            /* case 4 */
+            if (s.sslp != 0) {
+              return symbol == PredSymbol::Eq ? bot() : top();
+            } else {
+              return createLiteral(s.lim_at(vt_term()), symbol);
+            }
+          }
+          case PredSymbol::Geq:
+          case PredSymbol::Gt: {
+            /* case 5 */
+            return createLiteral(s.lim_at(vt_term()), 
+                  s.sslp > 0 ? PredSymbol::Geq
+                : s.sslp < 0 ? PredSymbol::Gt
+                :              symbol);
+          }
+        }
+      } else {
+        SASSERT(!vt.epsilon && !vt.infty && !vt.period);
+        return createLiteral(subs(s.self, x, vt_term()), symbol);
+      }
+    }
+
+
+    auto vsubs_aperiodic1(Literals const& lits, Var const& x, VirtualTerm& term) {
+      SASSERT(!term.period);
+          /* case 2 */
+      return iter::array(lits) 
+        | iter::map([&](auto lit) {
+            auto s = analyse(lit.term(), x);
+            auto symbol = lit.symbol();
+            return vsubs_aperiodic0(s, symbol, x, term);
+        });
+    }
+
+    auto vsubs(Literals const& lits, Var const& x, VirtualTerm& term) {
+      return iter::if_then_(term.period, [&](){
+          /* case 1 */
+                              auto fin = iter::dummy<VirtualTerm>();
+                              return fin | iter::map([&](auto t) { return vsubs_aperiodic1(lits, x, t); });
+                            }())
+                   else____(iter::vals(vsubs_aperiodic1(lits, x, term)));
+    }
 
 
     auto quantifier_elimination(Var const& x, Literals const& lits)
