@@ -1,4 +1,5 @@
 #include <optional>
+#include <iostream>
 
 #pragma once
 
@@ -759,15 +760,86 @@ DEF_BMINUS(CTerm   , CTerm   )
     };
 
 
-    class VirtualTerm {
-    public:
-      static VirtualTerm minusInf();
-      static VirtualTerm plusEpsilon(Term t);
-      static VirtualTerm plusEpsilon(VirtualTerm t);
-      static VirtualTerm plain(Term t);
-      static VirtualTerm periodic(Break b);
-      static VirtualTerm periodic(Term b, Numeral p);
+
+    enum class Infinity {
+      Plus,
+      Minus,
+      Zero,
     };
+
+    struct Infty {
+      bool positive;
+      Infty operator-() const 
+      { return Infty { .positive = !positive, }; }
+
+      friend std::ostream& operator<<(std::ostream& out, Infty const& self)
+      { 
+        if (self.positive) {
+          return out << "∞";
+        } else {
+          return out << "-∞";
+        }
+      }
+    };
+
+    struct Epsilon {
+      friend std::ostream& operator<<(std::ostream& out, Epsilon const& self)
+      { return out << "ε"; }
+    };
+    static constexpr Infty infty { .positive = true, };
+    static constexpr Epsilon epsilon;
+
+    class VirtualTerm {
+      std::optional<Term> _term;
+      std::optional<Epsilon> _epsilon;
+      std::optional<Numeral> _period;
+      std::optional<Infty> _infinity;
+    public:
+      VirtualTerm(
+        std::optional<Term> term,
+        std::optional<Epsilon> epsilon,
+        std::optional<Numeral> period,
+        std::optional<Infty> infinity) 
+        : _term(std::move(term))
+        , _epsilon(std::move(epsilon))
+        , _period(std::move(period))
+        , _infinity(std::move(infinity))
+      {}
+
+      VirtualTerm(Break t_pZ) : VirtualTerm(std::move(t_pZ.t), {}, std::move(t_pZ.p), {}) {}
+      VirtualTerm(Infty infty) : VirtualTerm({}, {}, {}, infty) {}
+      VirtualTerm(Term t) : VirtualTerm(std::move(t), {}, {}, {}) {}
+
+      friend VirtualTerm operator+(VirtualTerm const& t, Epsilon const);
+
+      static VirtualTerm periodic(Term b, Numeral p) { return VirtualTerm(std::move(b), {}, std::move(p), {}); }
+
+      friend std::ostream& operator<<(std::ostream& out, VirtualTerm const& self)
+      { 
+        bool fst = true;
+#define OUTPUT(field) \
+        if (fst) { out << field; fst = false; }\
+        else { out << " + " << field; }\
+
+        if (self.term) { OUTPUT(*self._term) }
+        if (self.epsilon) { OUTPUT(*self._epsilon) }
+        if (self.period) { OUTPUT(*self._period << " ℤ") }
+        if (self.infinity) { OUTPUT(*self._infinity) }
+        if (fst) { out << "0"; fst = false; }
+        return out; 
+      }
+    };
+
+    friend VirtualTerm operator+(Term const& t, Epsilon const) 
+    { return VirtualTerm(t) + epsilon; }
+
+    friend VirtualTerm operator+(VirtualTerm const& t, Epsilon const) 
+    { 
+      VirtualTerm out = t;
+      out._epsilon = std::optional<Epsilon>(epsilon);
+      return out; 
+    }
+
 
 #define if_then_(x, y) if_then([&]() { return x; }, [&]() { return y; }) 
 #define else_if_(x, y) .else_if([&]() { return x; }, [&]() { return y; })
@@ -782,25 +854,25 @@ DEF_BMINUS(CTerm   , CTerm   )
       using VT = VirtualTerm;
 
       return iter::if_then_(t.breaks.empty(), 
-                           iter::if_then_(t.sslp == 0              , iter::vals(VT::minusInf()))
-                                 else_if_(symbol == PredSymbol::Neq, iter::vals(VT::minusInf(), VT::plusEpsilon(t.zero(term(0)))))
-                                 else_if_(symbol == PredSymbol:: Eq, iter::vals(VT::plain(t.zero(term(0)))))
-                                 else_if_(t.sslp < 0               , iter::vals(VT::minusInf()))
-                                 else_if_(symbol == PredSymbol::Geq, iter::vals(VT::plain(t.zero(term(0)))))
-                                 else_is_(symbol == PredSymbol::Gt , iter::vals(VT::plusEpsilon(t.zero(term(0))))))
+                           iter::if_then_(t.sslp == 0              , iter::vals<VT>(-infty))
+                                 else_if_(symbol == PredSymbol::Neq, iter::vals<VT>(-infty, t.zero(term(0)) + epsilon))
+                                 else_if_(symbol == PredSymbol:: Eq, iter::vals<VT>(t.zero(term(0))))
+                                 else_if_(t.sslp < 0               , iter::vals<VT>(-infty))
+                                 else_if_(symbol == PredSymbol::Geq, iter::vals<VT>(t.zero(term(0))))
+                                 else_is_(symbol == PredSymbol::Gt , iter::vals<VT>(t.zero(term(0)) + epsilon)))
 
                    else_is_(!t.breaks.empty(), [&]() { 
                        auto ebreak       = [&]() { return 
                          iter::if_then_(t.periodic(), 
                                         iter::array_ptr(t.breaks) 
-                                          | iter::map([&](auto* b) { return VT::periodic(*b); }) )
+                                          | iter::map([&](auto* b) { return VT(*b); }) )
 
                                else____(iter::array_ptr(t.breaks) 
                                           | iter::flat_map([&](auto* b) { return intersectGrid(*b, Bound::Open, t.distXminus(), t.deltaX(), Bound::Open); })
-                                          | iter::map([](auto t) { return VT::plain(t); }) )
+                                          | iter::map([](auto t) { return VT(t); }) )
                        ; };
 
-                       auto breaks_plus_epsilon = [&]() { return iter::array_ptr(t.breaks) | iter::map([](auto* b) { return VT::plusEpsilon(VT::periodic(*b)); }); };
+                       auto breaks_plus_epsilon = [&]() { return iter::array_ptr(t.breaks) | iter::map([](auto* b) { return VT(*b) + epsilon; }); };
 
                        auto ezero = [&]() { return 
                           iter::if_then_(t.periodic(), 
@@ -809,29 +881,29 @@ DEF_BMINUS(CTerm   , CTerm   )
 
                                 else_if_(t.oslp == t.sslp,
                                          iter::array_ptr(t.breaks) 
-                                           | iter::map([&](auto* b) { return VT::plain(t.zero(b->t)); }))
+                                           | iter::map([&](auto* b) { return VT(t.zero(b->t)); }))
 
                                 else____(iter::array_ptr(t.breaks) 
                                            | iter::flat_map([&](auto* b) { return intersectGrid(Break { .t=t.zero(b->t), .p=(1 - t.oslp / t.sslp) },
                                                                                                 Bound::Open, t.distXminus(), t.deltaX(), Bound::Open); })
-                                           | iter::map([&](auto t) { return VT::plain(t); }))
+                                           | iter::map([&](auto t) { return VT(t); }))
                                          
                        ; };
                        auto eseg         = [&]() { return 
                            iter::if_then_(t.sslp == 0 || ( t.sslp < 0 && isIneq(symbol)), 
                                           breaks_plus_epsilon())
                                  else_if_(t.sslp >  0 && symbol == PredSymbol::Geq, iter::concat(breaks_plus_epsilon(), ezero()))
-                                 else_if_(t.sslp >  0 && symbol == PredSymbol::Gt , iter::concat(breaks_plus_epsilon(), ezero() | iter::map([](auto x) { return VT::plusEpsilon(x); })))
-                                 else_if_(t.sslp != 0 && symbol == PredSymbol::Neq, iter::concat(breaks_plus_epsilon(), ezero() | iter::map([](auto x) { return VT::plusEpsilon(x); })))
+                                 else_if_(t.sslp >  0 && symbol == PredSymbol::Gt , iter::concat(breaks_plus_epsilon(), ezero() | iter::map([](auto x) { return x + epsilon; })))
+                                 else_if_(t.sslp != 0 && symbol == PredSymbol::Neq, iter::concat(breaks_plus_epsilon(), ezero() | iter::map([](auto x) { return x + epsilon; })))
                                  else_is_(t.sslp != 0 && symbol == PredSymbol::Eq,  ezero())
                        ; };
                        auto ebound_plus  = [&]() { return 
-                           iter::if_then_(t.lim_pos_inf(), iter::vals(VT::plain(t.distXplus()), VT::plusEpsilon(t.distXplus())))
-                                 else____(                 iter::vals(VT::plain(t.distXplus())                                         )); };
+                           iter::if_then_(t.lim_pos_inf(), iter::vals<VT>(t.distXplus(), t.distXplus() + epsilon))
+                                 else____(                 iter::vals<VT>(t.distXplus()                         )); };
 
                        auto ebound_minus = [&]() { return 
-                           iter::if_then_(t.lim_neg_inf(), iter::vals(VT::plain(t.distXplus()), VT::minusInf()))
-                                 else____(                 iter::vals(VT::plain(t.distXplus()))) ; };
+                           iter::if_then_(t.lim_neg_inf(), iter::vals<VT>(t.distXplus(), -infty))
+                                 else____(                 iter::vals<VT>(t.distXplus()        )); };
 
                        return iter::if_then_(t.periodic(), iter::concat(ebreak(), eseg()))
                                     else____(              iter::concat(ebreak(), eseg(), ebound_plus(), ebound_minus()));
