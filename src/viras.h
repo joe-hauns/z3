@@ -902,7 +902,10 @@ namespace viras {
         , epsilon(std::move(epsilon))
         , period(std::move(period))
         , infty(std::move(infinity))
-      {}
+      {
+        SASSERT(term || infinity);
+        SASSERT(!infty || !period);
+      }
 
       VirtualTerm(Break t_pZ) : VirtualTerm(std::move(t_pZ.t), {}, std::move(t_pZ.p), {}) {}
       VirtualTerm(Infty infty) : VirtualTerm({}, {}, {}, infty) {}
@@ -1027,9 +1030,6 @@ namespace viras {
 
     Literal literal(bool b) { return CLiteral { &_config, _config.create_literal(b), }; }
 
-    // TODO nicer?
-    auto vt_term(VirtualTerm vt) { return vt.term ? *vt.term : term(0); };
-
     Literal vsubs_aperiodic0(LiraLiteral const& lit, Var const& x, VirtualTerm vt) {
       auto& s = lit.term;
       auto symbol = lit.symbol;
@@ -1038,6 +1038,9 @@ namespace viras {
         /* case 3 */
         if (s.periodic()) {
           vt.infty = {};
+          if (!vt.term) {
+            vt.term = term(0);
+          }
           return vsubs_aperiodic0(lit, x, vt);
         } else {
           return literal(lit.lim_inf(vt.infty->positive));
@@ -1050,13 +1053,13 @@ namespace viras {
             if (s.sslp != 0) {
               return symbol == PredSymbol::Eq ? literal(false) : literal(true);
             } else {
-              return literal(s.lim_at(vt_term(vt)), symbol);
+              return literal(s.lim_at(*vt.term), symbol);
             }
           }
           case PredSymbol::Geq:
           case PredSymbol::Gt: {
             /* case 5 */
-            return literal(s.lim_at(vt_term(vt)), 
+            return literal(s.lim_at(*vt.term), 
                   s.sslp > 0 ? PredSymbol::Geq
                 : s.sslp < 0 ? PredSymbol::Gt
                 :              symbol);
@@ -1064,7 +1067,7 @@ namespace viras {
         }
       } else {
         SASSERT(!vt.epsilon && !vt.infty && !vt.period);
-        return literal(subs(s.self, x, vt_term(vt)), symbol);
+        return literal(subs(s.self, x, *vt.term), symbol);
       }
     }
 
@@ -1076,21 +1079,19 @@ namespace viras {
         | iter::map([&](auto lit) { return vsubs_aperiodic0(lit, x, term); });
     }
 
-    auto vsubs(std::vector<LiraLiteral> const& lits, Var const& x, VirtualTerm const& term) {
-      SASSERT(!term.infty || !term.period);
-      return iter::if_then_(term.period, ([&](){
+    auto vsubs(std::vector<LiraLiteral> const& lits, Var const& x, VirtualTerm const& vt) {
+      return iter::if_then_(vt.period, ([&](){
                               /* case 1 */
                               Numeral lambda = *(iter::array(lits)
                                              | iter::filter([&](auto L) { return L->periodic(); })
                                              | iter::map([&](auto L) { return L.term.per; })
                                              | iter::fold([](auto l, auto r) { return lcm(l, r); }));
-                              // auto grid = Break { vt_term(term), *term.period };
-                              auto iGrid = [this, term](auto... args) { return intersectGrid(Break { vt_term(term), *term.period, }, args...)
+                              auto iGrid = [this, vt](auto... args) { return intersectGrid(Break { *vt.term, *vt.period, }, args...)
                                                   | iter::map([](auto x) { return VirtualTerm(x); });
                               ; };
                               auto all_lim_top = [&](Infty i) { return iter::array(lits) | iter::all([&](auto l) { return l.lim(i) == true; }); };
-                              auto one_lambda_plus = [this, iGrid, term, lambda](Infty inf) {
-                                return iGrid(Bound::Closed, vt_term(term), lambda, Bound::Open) 
+                              auto one_lambda_plus = [iGrid, vt, lambda](Infty inf) {
+                                return iGrid(Bound::Closed, *vt.term, lambda, Bound::Open) 
                                      | iter::map([&](auto s) { return s + inf; });
                               };
                               std::optional<LiraLiteral> aperiodic_equality;
@@ -1114,7 +1115,7 @@ namespace viras {
                                           );
                               return std::move(fin) | iter::map([&](auto t) { return vsubs_aperiodic1(lits, x, t); });
                             }()))
-                   else____(iter::vals(vsubs_aperiodic1(lits, x, term)));
+                   else____(iter::vals(vsubs_aperiodic1(lits, x, vt)));
     }
 
 
