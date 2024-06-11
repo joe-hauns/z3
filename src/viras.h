@@ -406,241 +406,214 @@ namespace viras {
 
   enum class PredSymbol { Gt, Geq, Neq, Eq, };
 
+  template<class Config>
+  class Viras {
+
   // START OF SYNTAX SUGAR STUFF
 
-  template<class Config, class T>
-  struct WithConfig { 
-    Config* config; 
-    T inner; 
-    friend bool operator==(WithConfig l, WithConfig r) 
-    { 
-      SASSERT(l.config == r.config);
-      return l.inner == r.inner;
+    template<class T>
+    struct WithConfig { 
+      Config* config; 
+      T inner; 
+      friend bool operator==(WithConfig l, WithConfig r) 
+      { 
+        SASSERT(l.config == r.config);
+        return l.inner == r.inner;
+      }
+      friend bool operator!=(WithConfig l, WithConfig r) 
+      { return !(l == r); }
+    };
+
+    struct CTerm : public WithConfig<typename Config::Term> { };
+    struct CNumeral : public WithConfig<typename Config::Numeral> {};
+    struct CVar : public WithConfig<typename Config::Var> {};
+    struct CLiteral : public WithConfig<typename Config::Literal> {
+      CTerm term() const
+      { return CTerm {this->config, this->config->term_of_literal(this->inner)}; }
+
+      PredSymbol symbol() const
+      { return this->config->symbol_of_literal(this->inner); }
+    };
+    struct CLiterals : public WithConfig<typename Config::Literals> {
+      auto size() const { return this->config->literals_size(this->inner); }
+      auto operator[](size_t idx) const { 
+        return CLiteral { this->config, this->config->literals_get(this->inner, idx) }; 
+      }
+    };
+
+    ///////////////////////////////////////
+    // PRIMARY OPERATORS
+    ///////////////////////////////////////
+
+    friend CTerm operator+(CTerm lhs, CTerm rhs) 
+    {
+      SASSERT(lhs.config == rhs.config);
+      return CTerm {lhs.config, lhs.config->add(lhs.inner, rhs.inner)};
     }
-    friend bool operator!=(WithConfig l, WithConfig r) 
-    { return !(l == r); }
-  };
 
-  template<class Config>
-  struct CTerm : public WithConfig<Config, typename Config::Term> { };
-
-  template<class Config>
-  struct CNumeral : public WithConfig<Config, typename Config::Numeral> {};
-
-  template<class Config>
-  struct CVar : public WithConfig<Config, typename Config::Var> {};
-
-  template<class Config>
-  struct CLiteral : public WithConfig<Config, typename Config::Literal> {
-    CTerm<Config> term() const
-    { return CTerm<Config> {this->config, this->config->term_of_literal(this->inner)}; }
-
-    PredSymbol symbol() const
-    { return this->config->symbol_of_literal(this->inner); }
-  };
-
-  template<class Config>
-  struct CLiterals : public WithConfig<Config, typename Config::Literals> {
-    auto size() const { return this->config->literals_size(this->inner); }
-    auto operator[](size_t idx) const { 
-      return CLiteral<Config> { this->config, this->config->literals_get(this->inner, idx) }; 
+    friend CTerm operator*(CNumeral lhs, CTerm rhs) 
+    {
+      SASSERT(lhs.config == rhs.config);
+      return CTerm {lhs.config, lhs.config->mul(lhs.inner, rhs.inner)};
     }
-  };
 
-  ///////////////////////////////////////
-  // PRIMARY OPERATORS
-  ///////////////////////////////////////
+    friend CNumeral operator*(CNumeral lhs, CNumeral rhs) 
+    {
+      SASSERT(lhs.config == rhs.config);
+      return CNumeral {lhs.config, lhs.config->mul(lhs.inner, rhs.inner)};
+    }
 
-  template<class Config>
-  CTerm<Config> operator+(CTerm<Config> lhs, CTerm<Config> rhs) 
-  {
-    SASSERT(lhs.config == rhs.config);
-    return CTerm<Config> {lhs.config, lhs.config->add(lhs.inner, rhs.inner)};
-  }
+    ///////////////////////////////////////
+    // LIFTED OPERATORS
+    ///////////////////////////////////////
 
-  template<class Config>
-  CTerm<Config> operator*(CNumeral<Config> lhs, CTerm<Config> rhs) 
-  {
-    SASSERT(lhs.config == rhs.config);
-    return CTerm<Config> {lhs.config, lhs.config->mul(lhs.inner, rhs.inner)};
-  }
+    friend CNumeral operator+(CNumeral lhs, CNumeral rhs) 
+    { return CNumeral { lhs.config, lhs.config->add(lhs.inner, rhs.inner)}; }
 
-  template<class Config>
-  CNumeral<Config> operator*(CNumeral<Config> lhs, CNumeral<Config> rhs) 
-  {
-    SASSERT(lhs.config == rhs.config);
-    return CNumeral<Config> {lhs.config, lhs.config->mul(lhs.inner, rhs.inner)};
-  }
+    friend CTerm operator+(CNumeral lhs, CTerm rhs) 
+    { return CTerm { rhs.config, lhs.config->term(lhs.inner)} + rhs; }
 
-  ///////////////////////////////////////
-  // LIFTED OPERATORS
-  ///////////////////////////////////////
+    friend CTerm operator+(CTerm lhs, CNumeral rhs) 
+    { return lhs + CTerm { rhs.config, rhs.config->term(rhs.inner), }; }
 
-  template<class Config>
-  CNumeral<Config> operator+(CNumeral<Config> lhs, CNumeral<Config> rhs) 
-  { return CNumeral<Config> { lhs.config, lhs.config->add(lhs.inner, rhs.inner)}; }
+#define LIFT_NUMRAL_TO_TERM_L(function)                                                   \
+    friend auto function(CNumeral lhs, CTerm rhs)                                         \
+    { return function(CTerm {lhs.config, lhs.config->term(lhs)}, rhs); }                  \
 
-  template<class Config>
-  CTerm<Config> operator+(CNumeral<Config> lhs, CTerm<Config> rhs) 
-  { return CTerm<Config> { rhs.config, lhs.config->term(lhs.inner)} + rhs; }
-
-  template<class Config>
-  CTerm<Config> operator+(CTerm<Config> lhs, CNumeral<Config> rhs) 
-  { return lhs + CTerm<Config> { rhs.config, rhs.config->term(rhs.inner), }; }
-
-#define LIFT_NUMRAL_TO_TERM_L(function)                                            \
-  template<class Config>                                                                  \
-  auto function(CNumeral<Config> lhs, CTerm<Config> rhs)                                      \
-  { return function(CTerm<Config> {lhs.config, lhs.config->term(lhs)}, rhs); }      \
-
-#define LIFT_NUMRAL_TO_TERM_R(function)                                            \
-  template<class Config>                                                                  \
-  auto function(CTerm<Config> lhs, CNumeral<Config> rhs)                                      \
-  { return function(lhs, CTerm<Config> {rhs.config, rhs.config->term(rhs)}); }      \
+#define LIFT_NUMRAL_TO_TERM_R(function)                                                   \
+    friend auto function(CTerm lhs, CNumeral rhs)                                         \
+    { return function(lhs, CTerm {rhs.config, rhs.config->term(rhs)}); }                  \
 
 #define LIFT_INT_TO_NUMERAL(function, CType)                                              \
-  LIFT_INT_TO_NUMERAL_L(function, CType)                                                  \
-  LIFT_INT_TO_NUMERAL_R(function, CType)                                                  \
+    LIFT_INT_TO_NUMERAL_L(function, CType)                                                \
+    LIFT_INT_TO_NUMERAL_R(function, CType)                                                \
 
 
 #define LIFT_INT_TO_NUMERAL_L(function, CType)                                            \
-  template<class Config>                                                                  \
-  auto function(int lhs, CType<Config> rhs)                                      \
-  { return function(CNumeral<Config> {rhs.config, rhs.config->numeral(lhs)}, rhs); }      \
+    friend auto function(int lhs, CType rhs)                                              \
+    { return function(CNumeral {rhs.config, rhs.config->numeral(lhs)}, rhs); }            \
 
 #define LIFT_INT_TO_NUMERAL_R(function, CType)                                            \
-  template<class Config>                                                                  \
-  auto function(CType<Config> lhs, int rhs)                                      \
-  { return function(lhs, CNumeral<Config> {lhs.config, lhs.config->numeral(rhs)}); }      \
+    friend auto function(CType lhs, int rhs)                                              \
+    { return function(lhs, CNumeral {lhs.config, lhs.config->numeral(rhs)}); }            \
 
 #define LIFT_INT_TO_NUMERAL(function, CType)                                              \
-  LIFT_INT_TO_NUMERAL_L(function, CType)                                                  \
-  LIFT_INT_TO_NUMERAL_R(function, CType)                                                  \
+    LIFT_INT_TO_NUMERAL_L(function, CType)                                                \
+    LIFT_INT_TO_NUMERAL_R(function, CType)                                                \
 
-  LIFT_INT_TO_NUMERAL(operator+, CNumeral)
-  LIFT_INT_TO_NUMERAL(operator-, CNumeral)
-  LIFT_INT_TO_NUMERAL(operator*, CNumeral)
+    LIFT_INT_TO_NUMERAL(operator+, CNumeral)
+    LIFT_INT_TO_NUMERAL(operator-, CNumeral)
+    LIFT_INT_TO_NUMERAL(operator*, CNumeral)
 
-  LIFT_INT_TO_NUMERAL(operator==, CNumeral)
-  LIFT_INT_TO_NUMERAL(operator!=, CNumeral)
-  LIFT_INT_TO_NUMERAL(operator<=, CNumeral)
-  LIFT_INT_TO_NUMERAL(operator>=, CNumeral)
-  LIFT_INT_TO_NUMERAL(operator< , CNumeral)
-  LIFT_INT_TO_NUMERAL(operator> , CNumeral)
+    LIFT_INT_TO_NUMERAL(operator==, CNumeral)
+    LIFT_INT_TO_NUMERAL(operator!=, CNumeral)
+    LIFT_INT_TO_NUMERAL(operator<=, CNumeral)
+    LIFT_INT_TO_NUMERAL(operator>=, CNumeral)
+    LIFT_INT_TO_NUMERAL(operator< , CNumeral)
+    LIFT_INT_TO_NUMERAL(operator> , CNumeral)
 
-  LIFT_INT_TO_NUMERAL(operator+, CTerm)
-  LIFT_INT_TO_NUMERAL(operator-, CTerm)
-  LIFT_INT_TO_NUMERAL_L(operator*, CTerm)
-
-
-   // MULTIPLICATION
-   // DIVISION
-
-  template<class Config>
-  CTerm<Config> operator/(CTerm<Config> lhs, CNumeral<Config> rhs) 
-  { return (1 / rhs) * lhs; }
-
-  template<class Config>
-  CNumeral<Config> operator/(CNumeral<Config> lhs, CNumeral<Config> rhs) 
-  { return CNumeral<Config>{ rhs.config, rhs.config->inverse(rhs.inner) } * lhs; }
-
-  LIFT_INT_TO_NUMERAL_R(operator/, CTerm)
-  LIFT_INT_TO_NUMERAL(operator/, CNumeral)
-
-   // MINUS
-
-#define DEF_UMINUS(CType) \
-  template<class Config> \
-  CType<Config> operator-(CType<Config> x)  \
-  { return -1 * x; } \
-
-DEF_UMINUS(CNumeral)
-DEF_UMINUS(CTerm)
-
-#define DEF_BMINUS(T1, T2) \
-  template<class Config> \
-  auto operator-(T1<Config> x, T2<Config> y)  \
-  { return x + -y; } \
-
-DEF_BMINUS(CNumeral, CNumeral)
-DEF_BMINUS(CTerm   , CNumeral)
-DEF_BMINUS(CNumeral, CTerm   )
-DEF_BMINUS(CTerm   , CTerm   )
-
-   // ABS
-
-  template<class Config>
-  CNumeral<Config> abs(CNumeral<Config> x) 
-  { return x < 0 ? -x : x; }
-
-  template<class Config>
-  CNumeral<Config> num(CNumeral<Config> x)
-  { return CNumeral<Config> { x.config, x.config->num(x.inner) }; }
-
-  template<class Config>
-  CNumeral<Config> den(CNumeral<Config> x) 
-  { return CNumeral<Config> { x.config, x.config->den(x.inner) }; }
-
-  template<class Config>
-  CNumeral<Config> lcm(CNumeral<Config> l, CNumeral<Config> r)
-  { 
-    auto cn = [&](auto x) { return CNumeral<Config> { l.config, x }; };
-    return cn(l.config->lcm(num(l).inner, num(r).inner)) 
-         / cn(l.config->gcd(den(l).inner, den(r).inner));  
-  }
-  // { return x < 0 ? -x : x; }
-
-   // floor
-
-  template<class Config>
-  CTerm<Config> floor(CTerm<Config> x) 
-  { return CTerm<Config> { x.config, x.config->floor(x.inner), }; }
-
-  template<class Config>
-  CTerm<Config> ceil(CTerm<Config> x) 
-  { return -floor(-x); }
+    LIFT_INT_TO_NUMERAL(operator+, CTerm)
+    LIFT_INT_TO_NUMERAL(operator-, CTerm)
+    LIFT_INT_TO_NUMERAL_L(operator*, CTerm)
 
 
-  template<class Config>
-  CNumeral<Config> floor(CNumeral<Config> x) 
-  { return CNumeral<Config> { x.config, x.config->floor(x.inner), }; }
+     // MULTIPLICATION
+     // DIVISION
 
-  // COMPARISIONS
+    friend CTerm operator/(CTerm lhs, CNumeral rhs) 
+    { return (1 / rhs) * lhs; }
 
-  template<class Config>
-  bool operator<=(CNumeral<Config> lhs, CNumeral<Config> rhs) 
-  { return lhs.config->leq(lhs.inner, rhs.inner); }
+    friend CNumeral operator/(CNumeral lhs, CNumeral rhs) 
+    { return CNumeral{ rhs.config, rhs.config->inverse(rhs.inner) } * lhs; }
 
-  template<class Config>
-  bool operator<(CNumeral<Config> lhs, CNumeral<Config> rhs) 
-  { return lhs.config->less(lhs.inner, rhs.inner); }
+    LIFT_INT_TO_NUMERAL_R(operator/, CTerm)
+    LIFT_INT_TO_NUMERAL(operator/, CNumeral)
 
-  template<class Config>
-  bool operator>=(CNumeral<Config> lhs, CNumeral<Config> rhs) 
-  { return rhs <= lhs; }
+     // MINUS
 
-  template<class Config>
-  bool operator>(CNumeral<Config> lhs, CNumeral<Config> rhs) 
-  { return rhs < lhs; }
+#define DEF_UMINUS(CType)                                                                 \
+    friend CType operator-(CType x)                                                       \
+    { return -1 * x; }                                                                    \
+
+  DEF_UMINUS(CNumeral)
+  DEF_UMINUS(CTerm)
+
+#define DEF_BMINUS(T1, T2)                                                                \
+    friend auto operator-(T1 x, T2 y)                                                     \
+    { return x + -y; }                                                                    \
+
+  DEF_BMINUS(CNumeral, CNumeral)
+  DEF_BMINUS(CTerm   , CNumeral)
+  DEF_BMINUS(CNumeral, CTerm   )
+  DEF_BMINUS(CTerm   , CTerm   )
+
+     // ABS
+
+    friend CNumeral abs(CNumeral x) 
+    { return x < 0 ? -x : x; }
+
+    friend CNumeral num(CNumeral x)
+    { return CNumeral { x.config, x.config->num(x.inner) }; }
+
+    friend CNumeral den(CNumeral x) 
+    { return CNumeral { x.config, x.config->den(x.inner) }; }
+
+    friend CNumeral lcm(CNumeral l, CNumeral r)
+    { 
+      auto cn = [&](auto x) { return CNumeral { l.config, x }; };
+      return cn(l.config->lcm(num(l).inner, num(r).inner)) 
+           / cn(l.config->gcd(den(l).inner, den(r).inner));  
+    }
+
+     // floor
+    friend CTerm floor(CTerm x) 
+    { return CTerm { x.config, x.config->floor(x.inner), }; }
+
+    friend CTerm ceil(CTerm x) 
+    { return -floor(-x); }
+
+
+    friend CNumeral floor(CNumeral x) 
+    { return CNumeral { x.config, x.config->floor(x.inner), }; }
+
+    // COMPARISIONS
+
+    friend bool operator<=(CNumeral lhs, CNumeral rhs) 
+    { return lhs.config->leq(lhs.inner, rhs.inner); }
+
+    friend bool operator<(CNumeral lhs, CNumeral rhs) 
+    { return lhs.config->less(lhs.inner, rhs.inner); }
+
+    friend bool operator>=(CNumeral lhs, CNumeral rhs) 
+    { return rhs <= lhs; }
+
+    friend bool operator>(CNumeral lhs, CNumeral rhs) 
+    { return rhs < lhs; }
 
 #define INT_CMP(OP)                                                                       \
-  template<class Config>                                                                  \
-  bool operator OP (CNumeral<Config> lhs, int rhs)                                        \
-  { return lhs OP CNumeral <Config> { lhs.config, lhs.config->numeral(rhs), }; }          \
+    friend bool operator OP (CNumeral lhs, int rhs)                                       \
+    { return lhs OP CNumeral  { lhs.config, lhs.config->numeral(rhs), }; }                \
                                                                                           \
-  template<class Config>                                                                  \
-  bool operator OP (int lhs, CNumeral<Config> rhs)                                        \
-  { return CNumeral <Config> { rhs.config, rhs.config->numeral(lhs), } OP rhs; }          \
-  
-  // END OF SYNTAX SUGAR STUFF
+    friend bool operator OP (int lhs, CNumeral rhs)                                       \
+    { return CNumeral  { rhs.config, rhs.config->numeral(lhs), } OP rhs; }                \
 
-  template<class Config>
-  class Viras {
-    using Term     = CTerm<Config>;
-    using Numeral  = CNumeral<Config>;
-    using Var      = CVar<Config>;
-    using Literals = CLiterals<Config>;
-    using Literal  = CLiteral<Config>;
+    friend CTerm quot(CTerm t, CNumeral p) { return floor(t / p); }
+    friend CTerm rem(CTerm t, CNumeral p) { return t - p * quot(t, p); }
+
+    friend CTerm subs(CTerm t, CVar v, CTerm by) {
+      return Term { t.config, t.config->subs(t.inner, v.inner, by.inner), };
+    }
+
+    
+    // END OF SYNTAX SUGAR STUFF
+
+
+    using Term     = CTerm;
+    using Numeral  = CNumeral;
+    using Var      = CVar;
+    using Literals = CLiterals;
+    using Literal  = CLiteral;
+
     Config _config;
   public:
 
@@ -653,15 +626,17 @@ DEF_BMINUS(CTerm   , CTerm   )
       Numeral p;
     };
 
-    Term quot(Term t, Numeral p) { return floor(t / p); }
-    Term rem(Term t, Numeral p) { return t - p * quot(t, p); }
+    template<class L, class R> struct Add { L l; R r; };
+    template<class L, class R> struct Mul { L l; R r; };
 
-    Term grid_ceil (Term t, Break s_pZ) { return t + rem(s_pZ.t - t, s_pZ.p); }
-    Term grid_floor(Term t, Break s_pZ) { return t - rem(t - s_pZ.t, s_pZ.p); }
+    template<class L, class R>
+    Term eval(Add<L, R> x) { return _config.add(eval(x.l), eval(x.r)); };
 
-    static Term subs(Term t, Var v, Term by) {
-      return Term { t.config, t.config->subs(t.inner, v.inner, by.inner), };
-    }
+    template<class T>
+    struct Expr : public std::variant<T> { };
+
+    friend CTerm grid_ceil (CTerm t, Break s_pZ) { return t + rem(s_pZ.t - t, s_pZ.p); }
+    friend CTerm grid_floor(CTerm t, Break s_pZ) { return t - rem(t - s_pZ.t, s_pZ.p); }
 
     struct LiraTerm {
       Term self;
@@ -680,26 +655,34 @@ DEF_BMINUS(CTerm   , CTerm   )
       }
       Term distXplus() { return distXminus() + deltaX(); }
       Numeral deltaX() { return abs(1 / oslp) * deltaY; }
+      Term lim_at(Term x0) const { return subs(lim, x, x0); }
+      Term dseg(Term x0) const { return -(sslp * x0) + lim_at(x0); }
+      Term zero(Term x0) const { return x0 - lim_at(x0) / sslp; }
+      bool periodic() const { return oslp == 0; }
+    };
 
-      bool lim_inf(PredSymbol symbol, bool positive) const
+
+    struct LiraLiteral {
+      LiraTerm term;
+      PredSymbol symbol;
+
+      bool lim_pos_inf() const { return lim_inf(/* pos */ true); }
+      bool lim_neg_inf() const { return lim_inf(/* pos */ false); }
+      bool periodic() const { return term.periodic(); }
+
+      bool lim_inf(bool positive) const
       { 
-        SASSERT(oslp != 0);
+        SASSERT(term.oslp != 0);
         switch (symbol) {
         case PredSymbol::Gt:
-        case PredSymbol::Geq: return positive ? oslp > 0 
-                                              : oslp < 0;
+        case PredSymbol::Geq: return positive ? term.oslp > 0 
+                                              : term.oslp < 0;
         case PredSymbol::Neq: return true;
         case PredSymbol::Eq: return false;
         }
       }
 
-      bool lim_pos_inf(PredSymbol symbol) const { return lim_inf(symbol, /* pos */ true); }
-      bool lim_neg_inf(PredSymbol symbol) const { return lim_inf(symbol, /* pos */ false); }
 
-      Term lim_at(Term x0) const { return subs(lim, x, x0); }
-      Term dseg(Term x0) const { return -(sslp * x0) + lim_at(x0); }
-      Term zero(Term x0) const { return x0 - lim_at(x0) / sslp; }
-      bool periodic() const { return oslp == 0; }
     };
 
     template<class IfVar, class IfOne, class IfMul, class IfAdd, class IfFloor>
@@ -711,17 +694,17 @@ DEF_BMINUS(CTerm   , CTerm   )
         IfFloor if_floor
         ) -> decltype(auto) {
       return _config.matchTerm(t.inner,
-        [&](auto x) { return if_var(CVar<Config>{ &_config, x }); }, 
+        [&](auto x) { return if_var(CVar{ &_config, x }); }, 
         [&]() { return if_one(); }, 
-        [&](auto l, auto r) { return if_mul(CNumeral<Config>{&_config, l},CTerm<Config>{&_config, r}); }, 
-        [&](auto l, auto r) { return if_add(CTerm<Config>{&_config, l},CTerm<Config>{&_config, r}); }, 
-        [&](auto x) { return if_floor(CTerm<Config>{&_config, x}); }
+        [&](auto l, auto r) { return if_mul(CNumeral{&_config, l},CTerm{&_config, r}); }, 
+        [&](auto l, auto r) { return if_add(CTerm{&_config, l},CTerm{&_config, r}); }, 
+        [&](auto x) { return if_floor(CTerm{&_config, x}); }
            );
     }
 
-    Numeral numeral(int i)  { return CNumeral<Config> { &_config, _config.numeral(i)}; }
-    Term    term(Numeral n) { return CTerm<Config>    { &_config, _config.term(n.inner) }; }
-    Term    term(Var v)     { return CTerm<Config>    { &_config, _config.term(v.inner) }; }
+    Numeral numeral(int i)  { return CNumeral { &_config, _config.numeral(i)}; }
+    Term    term(Numeral n) { return CTerm    { &_config, _config.term(n.inner) }; }
+    Term    term(Var v)     { return CTerm    { &_config, _config.term(v.inner) }; }
     Term    term(int i)     { return term(numeral(i)); }
 
     enum class Bound {
@@ -856,6 +839,11 @@ DEF_BMINUS(CTerm   , CTerm   )
         );
     };
 
+    LiraLiteral analyse(Literal self, Var x) 
+    { return LiraLiteral { analyse(self.term(), x), self.symbol() }; }
+
+
+
 
 
     enum class Infinity {
@@ -914,9 +902,9 @@ DEF_BMINUS(CTerm   , CTerm   )
       friend std::ostream& operator<<(std::ostream& out, VirtualTerm const& self)
       { 
         bool fst = true;
-#define OUTPUT(field) \
-        if (fst) { out << field; fst = false; }\
-        else { out << " + " << field; }\
+#define OUTPUT(field)                                                                     \
+        if (fst) { out << field; fst = false; }                                           \
+        else { out << " + " << field; }                                                   \
 
         if (self.term) { OUTPUT(*self.term) }
         if (self.epsilon) { OUTPUT(*self.epsilon) }
@@ -953,10 +941,11 @@ DEF_BMINUS(CTerm   , CTerm   )
 #define else____(x) .else_([&]() { return x; })
 #define else_is_(x,y) .else_([&]() { SASSERT(x); return y; })
 
-    auto elim_set(Var const& x, Literal const& lit)
+    auto elim_set(Var const& x, Literal const& l)
     {
-      auto t = analyse(lit.term(), x);
-      auto symbol = lit.symbol();
+      auto lit = analyse(l, x);
+      auto t = lit.term;
+      auto symbol = lit.symbol;
       auto isIneq = [](auto symbol) { return (symbol == PredSymbol::Geq || symbol == PredSymbol::Gt); };
       using VT = VirtualTerm;
 
@@ -1005,12 +994,12 @@ DEF_BMINUS(CTerm   , CTerm   )
                                  else_is_(t.sslp != 0 && symbol == PredSymbol::Eq,  ezero())
                        ; };
                        auto ebound_plus  = [&]() { return 
-                           iter::if_then_(t.lim_pos_inf(symbol), iter::vals<VT>(t.distXplus(), t.distXplus() + epsilon))
-                                 else____(                       iter::vals<VT>(t.distXplus()                         )); };
+                           iter::if_then_(lit.lim_pos_inf(), iter::vals<VT>(t.distXplus(), t.distXplus() + epsilon))
+                                 else____(                   iter::vals<VT>(t.distXplus()                         )); };
 
                        auto ebound_minus = [&]() { return 
-                           iter::if_then_(t.lim_neg_inf(symbol), iter::vals<VT>(t.distXplus(), -infty))
-                                 else____(                       iter::vals<VT>(t.distXplus()        )); };
+                           iter::if_then_(lit.lim_neg_inf(), iter::vals<VT>(t.distXplus(), -infty))
+                                 else____(                   iter::vals<VT>(t.distXplus()        )); };
 
                        return iter::if_then_(t.periodic(), iter::concat(ebreak(), eseg()))
                                     else____(              iter::concat(ebreak(), eseg(), ebound_plus(), ebound_minus()));
@@ -1032,22 +1021,24 @@ DEF_BMINUS(CTerm   , CTerm   )
     };
 
     Literal literal(Term t, PredSymbol s) 
-    { return CLiteral<Config> { &_config, _config.create_literal(t.inner, s), }; }
+    { return CLiteral { &_config, _config.create_literal(t.inner, s), }; }
 
-    Literal literal(bool b) { return CLiteral<Config> { &_config, _config.create_literal(b), }; }
+    Literal literal(bool b) { return CLiteral { &_config, _config.create_literal(b), }; }
 
     // TODO nicer?
     auto vt_term(VirtualTerm vt) { return vt.term ? *vt.term : term(0); };
 
-    Literal vsubs_aperiodic0(LiraTerm const& s, PredSymbol symbol, Var const& x, VirtualTerm vt) {
+    Literal vsubs_aperiodic0(LiraLiteral const& lit, Var const& x, VirtualTerm vt) {
+      auto& s = lit.term;
+      auto symbol = lit.symbol;
       SASSERT(!vt.period);
       if (vt.infty) {
         /* case 3 */
         if (s.periodic()) {
           vt.infty = {};
-          return vsubs_aperiodic0(s, symbol, x, vt);
+          return vsubs_aperiodic0(lit, x, vt);
         } else {
-          return literal(s.lim_inf(symbol, vt.infty->positive));
+          return literal(lit.lim_inf(vt.infty->positive));
         }
       } else if (vt.epsilon) {
         switch(symbol) {
@@ -1076,63 +1067,52 @@ DEF_BMINUS(CTerm   , CTerm   )
     }
 
 
-    auto vsubs_aperiodic1(Literals const& lits, Var const& x, VirtualTerm const& term) {
+    auto vsubs_aperiodic1(std::vector<LiraLiteral> const& lits, Var const& x, VirtualTerm const& term) {
       SASSERT(!term.period);
           /* case 2 */
       return iter::array(lits) 
-        | iter::map([&](auto lit) {
-            auto s = analyse(lit.term(), x);
-            auto symbol = lit.symbol();
-            return vsubs_aperiodic0(s, symbol, x, term);
-        });
+        | iter::map([&](auto lit) { return vsubs_aperiodic0(lit, x, term); });
     }
 
-    auto vsubs(Literals const& lits, Var const& x, VirtualTerm const& term) {
+    auto vsubs(Literals const& ls, Var const& x, VirtualTerm const& term) {
       SASSERT(!term.infty || !term.period);
-      return iter::if_then_(term.period, [&](){
+      std::vector<LiraLiteral> lits;
+      lits.reserve(ls.size());
+      iter::array(ls) | iter::foreach([&](auto l) { return lits.push_back(analyse(l, x)); });
+      return iter::if_then_(term.period, ([&](){
                               /* case 1 */
                               auto all_lits = [&](auto p) { return iter::array(lits) | iter::all(p); };
                               Numeral lambda = *(iter::array(lits)
-                                             | iter::filter([&](auto L) {
-                                                auto La = analyse(L->term(), x);
-                                                return La.periodic();
-                                             })
-                                             | iter::map([&](auto L) {
-                                                auto La = analyse(L.term(), x);
-                                                return La.per;
-                                             })
+                                             | iter::filter([&](auto L) { return L->periodic(); })
+                                             | iter::map([&](auto L) { return L.term.per; })
                                              | iter::fold([](auto l, auto r) { return lcm(l, r); }));
-                              // auto fin = ;
+                              auto grid = Break { vt_term(term), *term.period };
                               auto fin = 
-                                iter::if_then_(all_lits([&](auto l) { return analyse(l.term(), x).lim_pos_inf(l.symbol()); }), 
-                                               intersectGrid(Break { vt_term(term), *term.period }, Bound::Closed, vt_term(term), lambda, Bound::Open)
+                                iter::if_then_(all_lits([&](auto l) { return l.lim_pos_inf(); }), 
+                                               intersectGrid(grid, Bound::Closed, vt_term(term), lambda, Bound::Open)
                                                 | iter::map([](auto s) { return s + infty; }))
-                                      else_if_(all_lits([&](auto l) { return analyse(l.term(), x).lim_neg_inf(l.symbol()); }), 
-                                               intersectGrid(Break { vt_term(term), *term.period }, Bound::Closed, vt_term(term), lambda, Bound::Open)
+                                      else_if_(all_lits([&](auto l) { return l.lim_neg_inf(); }), 
+                                               intersectGrid(grid, Bound::Closed, vt_term(term), lambda, Bound::Open)
                                                 | iter::map([](auto s) { return s + -infty; }))
-                                      else_if_(iter::array(lits) | iter::any([](auto l) { return l.symbol() == PredSymbol::Eq; }), 
+                                      else_if_(iter::array(lits) | iter::any([](auto l) { return l.symbol == PredSymbol::Eq; }), 
                                           [&](){
-                                                auto L = *(iter::array(lits) | iter::find([](auto l) { return l.symbol() == PredSymbol::Eq; }));
-                                                auto La = analyse(L.term(), x);
-                                                return intersectGrid(Break { vt_term(term), *term.period }, Bound::Closed, La.distXminus(), La.deltaX(), Bound::Closed)
+                                                // TODO which one of these to find? The one with the smallest deltaX!!
+                                                auto L = *(iter::array(lits) | iter::find([](auto l) { return l.symbol == PredSymbol::Eq; }));
+                                                return intersectGrid(grid, Bound::Closed, L.term.distXminus(), L.term.deltaX(), Bound::Closed)
                                                   | iter::map([](auto x) { return VirtualTerm(x); });
                                           }())
                                       else____(
                                             iter::array(lits) 
-                                          | iter::filter([&](auto L) {
-                                                auto La = analyse(L->term(), x);
-                                                return !La.periodic() && La.lim_neg_inf(L->symbol()) == false;
-                                            })
+                                          | iter::filter([&](auto L) { return !L->periodic() && L->lim_neg_inf() == false; })
                                           | iter::flat_map([&](auto L) {
-                                                auto La = analyse(L.term(), x);
-                                                return intersectGrid(Break { vt_term(term), *term.period }, Bound::Closed, La.distXminus(), La.deltaX() + lambda, Bound::Closed);
+                                                return intersectGrid(Break { vt_term(term), *term.period }, Bound::Closed, L.term.distXminus(), L.term.deltaX() + lambda, Bound::Closed);
                                             })
                                           | iter::map([](auto t) { return VirtualTerm(t); })
 
                                           );
 
                               return std::move(fin) | iter::map([&](auto t) { return vsubs_aperiodic1(lits, x, t); });
-                            }())
+                            }()))
                    else____(iter::vals(vsubs_aperiodic1(lits, x, term)));
     }
 
@@ -1145,7 +1125,7 @@ DEF_BMINUS(CTerm   , CTerm   )
 
     auto quantifier_elimination(typename Config::Var const& x, typename Config::Literals const& lits)
     {
-      return quantifier_elimination(CVar<Config> { &_config, x }, CLiterals<Config> { &_config, lits });
+      return quantifier_elimination(CVar { &_config, x }, CLiterals { &_config, lits });
     }
   };
 
