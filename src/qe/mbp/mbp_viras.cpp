@@ -171,7 +171,7 @@ namespace mbp {
     }
 
     bool viras_project_plugin::operator()(model& model, app_ref_vector& vars, expr_ref_vector& lits) {
-      auto viras = Viras<z3_viras_config>(&m);
+      auto viras = viras::viras(simplifyingConfig(z3_viras_config(&m)));
       vector<expr_ref_vector> cur_disj;
       cur_disj.push_back(lits);
       // invariant: `cur_disj` is a disjunction of conjunctions equivalent to `lits`

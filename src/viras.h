@@ -415,6 +415,77 @@ namespace viras {
   enum class PredSymbol { Gt, Geq, Neq, Eq, };
 
   template<class Config>
+  struct SimplifyingConfig {
+    Config config;
+
+    SimplifyingConfig(Config c): config(std::move(c)) {}
+
+    using Literals = typename Config::Literals;
+    using Literal  = typename Config::Literal;
+    using Var      = typename Config::Var;
+    using Term     = typename Config::Term;
+    using Numeral  = typename Config::Numeral;
+
+    Numeral numeral(int i) { return config.numeral(i); }
+    Numeral lcm(Numeral l, Numeral r) { return config.lcm(l, r); }
+    Numeral gcd(Numeral l, Numeral r) { return config.gcd(l, r); }
+
+    Numeral mul(Numeral l, Numeral r) { return config.mul(l,r); }
+    Numeral add(Numeral l, Numeral r) { return config.add(l,r); }
+    Numeral floor(Numeral t) { return config.floor(t); }
+
+    Term simpl(Term t) { return t; } // TODO
+
+
+    Term term(Numeral n) { return config.term(n); }
+    Term term(Var v) { return config.term(v); }
+
+    Term mul(Numeral l, Term r) { return simpl(config.mul(l,r)); }
+    Term add(Term l, Term r) { return simpl(config.add(l,r)); }
+    Term floor(Term t) { return simpl(config.floor(t)); }
+
+    Numeral inverse(Numeral n) { return config.inverse(n); }
+
+    bool less(Numeral l, Numeral r) { return config.less(l,r); }
+    bool leq(Numeral l, Numeral r) { return config.leq(l,r); }
+
+    Term subs(Term term, Var var, Term by) 
+    { return simpl(config.subs(term,var,by)); }
+
+    PredSymbol symbol_of_literal(Literal l) 
+    { return config.symbol_of_literal(l); }
+
+    Term term_of_literal(Literal l)
+    { return config.term_of_literal(l); }
+
+    Literal create_literal(bool b) { return config.create_literal(b); }
+
+    Literal create_literal(Term t, PredSymbol s) { return config.create_literal(t,s); }
+
+    Numeral num(Numeral l) { return config.num(l); }
+
+    Numeral den(Numeral l) { return config.den(l); }
+
+    size_t literals_size(Literals const& l) { return config.literals_size(l); }
+    Literal literals_get(Literals const& l, size_t idx) { return config.literals_get(l,idx); }
+
+    template<class IfVar, class IfOne, class IfMul, class IfAdd, class IfFloor>
+    auto matchTerm(Term t, 
+        IfVar   if_var, 
+        IfOne   if_one, 
+        IfMul   if_mul, 
+        IfAdd   if_add, 
+        IfFloor if_floor) -> decltype(auto) {
+      return config.matchTerm(t,if_var,if_one,if_mul,if_add,if_floor);
+    }
+  };
+ 
+
+  template<class Config>
+  auto simplifyingConfig(Config c)
+  { return SimplifyingConfig<Config>(std::move(c)); }
+
+  template<class Config>
   class Viras {
 
   // START OF SYNTAX SUGAR STUFF
@@ -625,8 +696,8 @@ namespace viras {
     Config _config;
   public:
 
-    template<class... Args>
-    Viras(Args... args) : _config(args...) { };
+    Viras(Config c) : _config(std::move(c)) { };
+
     ~Viras() {};
 
     struct Break {
@@ -657,12 +728,16 @@ namespace viras {
       Term distYminus;
       Term distYplus() { return distYminus + deltaY; }
       std::vector<Break> breaks;
-      Term distXminus() { 
-        auto distY = oslp > 0 ? distYplus() : distYminus;
-        return -(1 / oslp) * distY;
+      Term distXminus() {
+        return -(1 / oslp) * (oslp > 0 ? distYminus + deltaY
+                                       : distYminus         );
       }
-      Term distXplus() { return distXminus() + deltaX(); }
-      Numeral deltaX() { return abs(1 / oslp) * deltaY; }
+      Term distXplus() { 
+        return  -(1 / oslp) * (oslp > 0 ? distYminus
+                                        : distYminus + deltaY);
+
+      }
+      Numeral deltaX() { return abs(1/oslp) * deltaY; }
       Term lim_at(Term x0) const { return subs(lim, x, x0); }
       Term dseg(Term x0) const { return -(sslp * x0) + lim_at(x0); }
       Term zero(Term x0) const { return x0 - lim_at(x0) / sslp; }
@@ -791,9 +866,9 @@ namespace viras {
           return LiraTerm {
             .self = self,
             .x = x,
-            .lim = k * rec.lim,
+            .lim = rec.per == 0 ? self : k * rec.lim,
             .sslp = k * rec.sslp,
-            .oslp = k * rec.sslp,
+            .oslp = k * rec.oslp,
             .per = rec.per,
             .deltaY = abs(k) * rec.deltaY,
             .distYminus = k >= 0 ? k * rec.distYminus
@@ -805,17 +880,18 @@ namespace viras {
         /* l + r */ [&](auto l, auto r) { 
           auto rec_l = analyse(l, x);
           auto rec_r = analyse(r, x);
+          auto per = rec_l.per == 0 ? rec_r.per
+                 : rec_r.per == 0 ? rec_l.per
+                 : lcm(rec_l.per, rec_r.per);
           auto breaks = std::move(rec_l.breaks);
           breaks.insert(breaks.end(), rec_l.breaks.begin(), rec_l.breaks.end());
           return LiraTerm {
             .self = self,
             .x = x,
-            .lim = rec_l.lim + rec_r.lim,
+            .lim = per == 0 ? self : rec_l.lim + rec_r.lim,
             .sslp = rec_l.sslp + rec_r.sslp,
-            .oslp = rec_l.sslp + rec_r.sslp,
-            .per = rec_l.per == 0 ? rec_r.per
-                 : rec_r.per == 0 ? rec_l.per
-                 : lcm(rec_l.per, rec_r.per),
+            .oslp = rec_l.oslp + rec_r.oslp,
+            .per = per,
             .deltaY = rec_l.deltaY + rec_r.deltaY,
             .distYminus = rec_l.distYminus + rec_r.distYminus,
             .breaks = std::move(breaks),
@@ -824,17 +900,19 @@ namespace viras {
 
         /* floor */ [&](auto t) { 
           auto rec = analyse(t, x);
+          auto per = rec.per == 0 && rec.oslp == 0 ? numeral(0)
+                   : rec.per == 0                  ? 1 / abs(rec.oslp)
+                   : num(rec.per) * den(rec.oslp);
           
           auto out = LiraTerm {
             .self = self,
             .x = x,
-            .lim = rec.sslp >= 0 ? floor(rec.lim) 
+            .lim = per == 0      ? self 
+                 : rec.sslp >= 0 ? floor(rec.lim) 
                                  : ceil(rec.lim) - 1,
             .sslp = numeral(0),
             .oslp = rec.oslp,
-            .per = rec.per == 0 && rec.oslp == 0 ? numeral(0)
-                 : rec.per == 0                  ? 1 / abs(rec.oslp)
-                 : num(rec.per) * den(rec.oslp),
+            .per = per,
             .deltaY = rec.deltaY + 1,
             .distYminus = rec.distYminus - 1,
             .breaks = std::vector<Break>(),
@@ -1130,6 +1208,9 @@ namespace viras {
       return quantifier_elimination(CVar { &_config, x }, lits);
     }
   };
+
+  template<class Config>
+  auto viras(Config c) { return Viras<Config>(std::move(c)); }
 
 
 }
