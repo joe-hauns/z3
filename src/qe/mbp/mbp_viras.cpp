@@ -31,11 +31,11 @@ Author:
 #include "ast/rewriter/expr_replacer.h"
 using namespace viras;
 
-struct z3_viras_config {
+struct z3_viras_api {
   ast_manager& m;
   arith_util m_arith;
   expr_replacer* const repl;
-  z3_viras_config(ast_manager* m) :m(*m), m_arith(*m), repl(mk_default_expr_replacer(*m, /* proofs */ false)) {}
+  z3_viras_api(ast_manager* m) :m(*m), m_arith(*m), repl(mk_default_expr_replacer(*m, /* proofs */ false)) {}
 
   using Literals = expr_ref_vector; 
   using Literal  = expr*; 
@@ -43,10 +43,11 @@ struct z3_viras_config {
   using Term     = expr*;
   using Numeral  = rational;
 
-  void output(std::ostream& out, Literals const& x) { out << x; }
-  void output(std::ostream& out, expr*          x)  { out << expr_ref(x, m); }
-  void output(std::ostream& out, Var const& x)      { out << app_ref(x, m); }
-  void output(std::ostream& out, Numeral const& x)  { out << x; }
+  void output_literals(std::ostream& out, Literals const& x) { out << x; }
+  void output_literal (std::ostream& out, expr* x)           { out << expr_ref(x, m); }
+  void output_term    (std::ostream& out, expr* x)           { out << expr_ref(x, m); }
+  void output_var     (std::ostream& out, Var const& x)      { out << app_ref(x, m); }
+  void output_numeral (std::ostream& out, Numeral const& x)  { out << x; }
 
   Numeral numeral(int i) { return rational(i); }
   Numeral lcm(Numeral l, Numeral r) { return rational::lcm(l, r); }
@@ -170,7 +171,7 @@ namespace mbp {
     }
 
     bool viras_project_plugin::operator()(model& model, app_ref_vector& vars, expr_ref_vector& lits) {
-      auto viras = viras::viras(z3_viras_config(&m));
+      auto viras = viras::viras(z3_viras_api(&m));
       vector<expr_ref_vector> cur_disj;
       cur_disj.push_back(lits);
       // invariant: `cur_disj` is a disjunction of conjunctions equivalent to `lits`
