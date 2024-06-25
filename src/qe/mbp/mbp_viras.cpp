@@ -26,16 +26,10 @@ Author:
 #include "model/model_smt2_pp.h"
 #include "model/model_v2_pp.h"
 #include "util/debug.h"
-#include "viras.h"
+#include <viras.h>
 #include "util/rational.h"
 #include "ast/rewriter/expr_replacer.h"
-
 using namespace viras;
-
-template<class Config>
-struct SugaryConfig {
-  Config config;
-};
 
 struct z3_viras_config {
   ast_manager& m;
@@ -48,6 +42,11 @@ struct z3_viras_config {
   using Var      = app*; 
   using Term     = expr*;
   using Numeral  = rational;
+
+  void output(std::ostream& out, Literals const& x) { out << x; }
+  void output(std::ostream& out, expr*          x)  { out << expr_ref(x, m); }
+  void output(std::ostream& out, Var const& x)      { out << app_ref(x, m); }
+  void output(std::ostream& out, Numeral const& x)  { out << x; }
 
   Numeral numeral(int i) { return rational(i); }
   Numeral lcm(Numeral l, Numeral r) { return rational::lcm(l, r); }
@@ -75,7 +74,7 @@ struct z3_viras_config {
     return result;
   }
 
-  std::pair<PredSymbol, Term> __normalize_lit(Literal l) {
+  std::pair<viras::PredSymbol, Term> __normalize_lit(Literal l) {
     PredSymbol sym;
     expr* a0;
     expr* a1;
@@ -171,7 +170,7 @@ namespace mbp {
     }
 
     bool viras_project_plugin::operator()(model& model, app_ref_vector& vars, expr_ref_vector& lits) {
-      auto viras = viras::viras(simplifyingConfig(z3_viras_config(&m)));
+      auto viras = viras::viras(z3_viras_config(&m));
       vector<expr_ref_vector> cur_disj;
       cur_disj.push_back(lits);
       // invariant: `cur_disj` is a disjunction of conjunctions equivalent to `lits`
@@ -181,12 +180,11 @@ namespace mbp {
         // using the property `exists x. (A \/ B) <-> exists x.A \/ exists x.B`
         for (int i = 0; i < vars.size(); i++) {
           auto var = vars[i].get();
-          for (auto conj_ : cur_disj) {
-            auto conj = viras.analyse(conj_, var);
+          for (auto conj : cur_disj) {
             viras.quantifier_elimination(var, conj)
               | iter::foreach([&](auto lits) { 
                   expr_ref_vector new_conj(m);
-                  lits | iter::foreach([&](auto lit) { new_conj.push_back(lit.inner); });
+                  lits | iter::foreach([&](auto lit) { new_conj.push_back(lit); });
                   new_disj.push_back(std::move(new_conj)); 
               });
           }

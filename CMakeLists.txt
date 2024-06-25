@@ -205,6 +205,7 @@ endif()
 list(APPEND Z3_COMPONENT_EXTRA_INCLUDE_DIRS
   "${PROJECT_BINARY_DIR}/src"
   "${PROJECT_SOURCE_DIR}/src"
+  "${PROJECT_SOURCE_DIR}/viras/src"
 )
 
 ################################################################################
